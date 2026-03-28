@@ -1,202 +1,129 @@
 # react-anchorlist
 
-**Lista virtualizada de alta performance para React, pensada para interfaces com muitos itens (como chat).**
+High-performance virtualized lists for React, optimized for chat and infinite feeds.
 
-Sem flicker ao carregar itens anteriores. Scroll fluido. Paginação nativa.
+No flicker when prepending older messages. Stable scroll. Simple API.
 
 ```bash
 npm install react-anchorlist
 ```
 
----
+## Why use it
 
-## O que é
+- Virtualizes large lists (renders only what is visible + overscan)
+- Keeps scroll stable when you prepend items (chat history)
+- Supports top/bottom pagination callbacks
+- Includes chat-focused behavior like `followOutput` and declarative scroll commands
+- Works with dynamic row heights via `ResizeObserver`
 
-`react-anchorlist` é uma biblioteca para renderizar listas grandes com boa performance.
-Ela mantém a navegação suave mesmo com histórico extenso, reduzindo custo de renderização e melhorando a experiência do usuário.
+## 60-second setup
 
----
-
-## Para que serve
-
-Use quando você precisa de:
-
-- **Renderização eficiente** em listas longas
-- **Scroll estável** ao adicionar itens no topo (padrão chat)
-- **Paginação incremental** ao chegar no início/fim da lista
-- **Comportamento previsível** para “seguir no final” quando chegam novos itens
-
----
-
-## Como funciona (alto nível)
-
-- Renderiza principalmente os itens visíveis (com pequeno overscan)
-- Mede altura real dos itens para manter posicionamento correto
-- Preserva âncora de scroll quando itens são inseridos no topo
-- Dispara callbacks ao aproximar do topo/fim para buscar mais dados
-
----
-
-## Quick start
-
-### Lista genérica (tickets, contatos, feed)
+### Generic list
 
 ```tsx
-import { VirtualList } from 'react-anchorlist'
+import { VirtualList } from "react-anchorlist"
 
 <VirtualList
   data={tickets}
-  computeItemKey={(index, item) => item.id}
-  itemContent={(index, item) => <TicketRow ticket={item} />}
+  computeItemKey={(_, item) => item.id}
+  itemContent={(_, item) => <TicketRow ticket={item} />}
   onEndReached={loadMore}
-  style={{ height: '100%' }}
+  style={{ height: "100%" }}
 />
 ```
 
-### Lista de chat (mensagens com paginação)
+### Chat list (recommended pattern)
 
 ```tsx
-import { ChatVirtualList } from 'react-anchorlist'
-import type { ChatVirtualListHandle } from 'react-anchorlist'
+import { useState } from "react"
+import { ChatVirtualList } from "react-anchorlist"
+import type { ChatScrollModifier } from "react-anchorlist"
 
-const listRef = useRef<ChatVirtualListHandle>(null)
+const [scrollModifier, setScrollModifier] = useState<ChatScrollModifier | null>(null)
 
 <ChatVirtualList
-  ref={listRef}
   data={messages}
-  computeItemKey={(index, item) => item._id}
-  itemContent={(index, item) => <Message data={item} />}
-  // Paginação — dispara ao chegar no topo
-  onStartReached={() => {
-    setScrollModifier({ id: `prepend-${Date.now()}`, type: 'prepend' })
-    loadOlderMessages()
-  }}
-  // API declarativa para operações de scroll
+  computeItemKey={(_, item) => item._id}
+  itemContent={(_, item) => <Message data={item} />}
   scrollModifier={scrollModifier}
-  // Mantém no final quando chegam novas mensagens
   followOutput="auto"
-  // Informa ao componente pai se está no final
-  onAtBottomChange={setIsAtBottom}
-  components={{
-    Header: () => loading ? <Spinner /> : null,
-    Footer: () => <QueueMessages />,
+  onStartReached={async () => {
+    // 1) tell the list to preserve anchor
+    setScrollModifier({ id: `prepend-${Date.now()}`, type: "prepend" })
+    // 2) prepend older messages in your state
+    await loadOlderMessages()
   }}
-  style={{ height: '100%' }}
+  onAtBottomChange={setIsAtBottom}
+  style={{ height: "100%" }}
 />
 ```
 
----
+## Core concept (important)
 
-## ChatVirtualList props
-
-| Prop | Type | Default | Description |
-|---|---|---|---|
-| `data` | `T[]` | required | Array de itens |
-| `itemContent` | `(index, item) => ReactNode` | required | Função de renderização |
-| `computeItemKey` | `(index, item) => string \| number` | required | Chave estável por item |
-| `estimatedItemSize` | `number` | `80` | Estimativa inicial de altura (px) |
-| `overscan` | `number` | `20` | Itens renderizados além da área visível |
-| `followOutput` | `"auto" \| "smooth" \| false` | `"auto"` | Seguir no final ao entrar item novo |
-| `atBottomThreshold` | `number` | `200` | Distância (px) para considerar “no final” |
-| `atBottomHysteresis` | `{ enter: number; leave: number }` | `{ enter: 80, leave: 160 }` | Evita alternância excessiva do estado "at bottom" |
-| `initialAlignment` | `"top" \| "bottom"` | `"bottom"` | Posição inicial do scroll |
-| `scrollModifier` | `ChatScrollModifier` | `null` | Comando declarativo para prepend/append/jump |
-| `onStartReached` | `() => void \| Promise<void>` | — | Dispara ao aproximar do topo |
-| `onEndReached` | `() => void \| Promise<void>` | — | Dispara ao aproximar do fim |
-| `startReachedThreshold` | `number` | `300` | Distância (px) do topo para disparar callback |
-| `endReachedThreshold` | `number` | `300` | Distância (px) do fim para disparar callback |
-| `onAtBottomChange` | `(isAtBottom: boolean) => void` | — | Mudança de estado “no final” |
-| `scrollToMessageKey` | `string \| number \| null` | — | **Deprecated**. Use `scrollModifier` com `type: "jump-to-key"` |
-| `onScrollToMessageComplete` | `() => void` | — | **Deprecated** |
-| `components` | `{ Header, Footer, EmptyPlaceholder }` | — | Slots opcionais |
-| `className` | `string` | — | Classe CSS do container |
-| `style` | `CSSProperties` | — | Estilo inline do container |
-
----
-
-## VirtualList props
-
-| Prop | Type | Default | Description |
-|---|---|---|---|
-| `data` | `T[]` | required | Array de itens |
-| `itemContent` | `(index, item) => ReactNode` | required | Função de renderização |
-| `computeItemKey` | `(index, item) => string \| number` | required | Chave estável por item |
-| `estimatedItemSize` | `number` | `60` | Estimativa inicial de altura (px) |
-| `overscan` | `number` | `20` | Itens renderizados além da área visível |
-| `onEndReached` | `() => void \| Promise<void>` | — | Dispara ao aproximar do fim |
-| `endReachedThreshold` | `number` | `300` | Distância (px) do fim para disparar callback |
-| `components` | `{ Header, Footer, EmptyPlaceholder }` | — | Slots opcionais |
-| `className` | `string` | — | Classe CSS do container |
-| `style` | `CSSProperties` | — | Estilo inline do container |
-
----
-
-## Ref handle (ChatVirtualList)
-
-```tsx
-const listRef = useRef<ChatVirtualListHandle>(null)
-
-listRef.current?.scrollToBottom()
-listRef.current?.scrollToIndex(42, { align: 'center', behavior: 'smooth' })
-listRef.current?.scrollToKey('msg-123', { align: 'center' })
-listRef.current?.getScrollTop()   // → number
-listRef.current?.isAtBottom()     // → boolean
-listRef.current?.prepareAnchor()  // deprecated
-```
-
-| Method | Description |
-|---|---|
-| `scrollToBottom(behavior?)` | Vai para o último item |
-| `scrollToIndex(index, opts?)` | Vai para item por índice |
-| `scrollToKey(key, opts?)` | Vai para item por chave |
-| `getScrollTop()` | Posição atual do scroll |
-| `isAtBottom()` | Indica se está no final |
-| `prepareAnchor()` | **Deprecated**. Use `scrollModifier={{ id, type: 'prepend' }}` |
-
----
-
-## ChatScrollModifier (API declarativa)
+When data changes, control scroll behavior with `scrollModifier`:
 
 ```ts
 type ChatScrollModifier =
-  | { id: string | number; type: 'prepend' }
-  | { id: string | number; type: 'append'; behavior?: 'auto' | 'smooth'; ifAtBottomOnly?: boolean }
-  | { id: string | number; type: 'items-change' }
-  | { id: string | number; type: 'jump-to-key'; key: string | number; align?: 'start' | 'center' | 'end'; behavior?: ScrollBehavior }
+  | { id: string | number; type: "prepend" }
+  | { id: string | number; type: "append"; behavior?: "auto" | "smooth"; ifAtBottomOnly?: boolean }
+  | { id: string | number; type: "items-change" }
+  | { id: string | number; type: "jump-to-key"; key: string | number; align?: "start" | "center" | "end"; behavior?: ScrollBehavior }
 ```
 
-- `id` precisa ser único por comando.
-- `prepend` prepara e restaura âncora automaticamente no próximo update de dados.
-- `jump-to-key` substitui `scrollToMessageKey`.
+- `id` must be unique for each command.
+- `prepend` keeps viewport position stable while older messages are added on top.
+- `append` can auto-scroll to bottom.
+- `jump-to-key` scrolls to one specific item.
 
----
+## API quick reference
 
-## Migração Rápida (v0.2 -> v0.3)
+### Exports
 
-Antes:
-
-```tsx
-listRef.current?.prepareAnchor()
-await loadMoreMessages()
+```ts
+import {
+  ChatVirtualList,
+  VirtualList,
+  useChatVirtualizer,
+  usePagination,
+} from "react-anchorlist"
 ```
 
-Depois:
+### `ChatVirtualList` most-used props
+
+- `data`, `itemContent`, `computeItemKey` (required)
+- `scrollModifier` (`ChatScrollModifier | null`)
+- `followOutput` (`"auto" | "smooth" | false`, default: `"auto"`)
+- `onStartReached`, `onEndReached`
+- `startReachedThreshold` and `endReachedThreshold` (default: `300`)
+- `onAtBottomChange`
+- `estimatedItemSize` (default: `80`)
+- `overscan` (default: `20`)
+
+### `VirtualList` most-used props
+
+- `data`, `itemContent`, `computeItemKey` (required)
+- `onEndReached`
+- `endReachedThreshold` (default: `300`)
+- `estimatedItemSize` (default: `60`)
+- `overscan` (default: `20`)
+
+### `ChatVirtualList` ref handle
 
 ```tsx
-setScrollModifier({ id: `prepend-${Date.now()}`, type: 'prepend' })
-await loadMoreMessages()
+listRef.current?.scrollToBottom()
+listRef.current?.scrollToIndex(42, { align: "center", behavior: "smooth" })
+listRef.current?.scrollToKey("msg-123", { align: "center" })
+listRef.current?.getScrollTop()
+listRef.current?.isAtBottom()
 ```
 
----
-
-## usePagination hook
-
-Para paginação orientada ao back-end com deduplicação automática:
+## `usePagination` hook (optional helper)
 
 ```tsx
-import { usePagination, ChatVirtualList } from 'react-anchorlist'
+import { useEffect } from "react"
+import { usePagination, ChatVirtualList } from "react-anchorlist"
 
-const { items, loadPrevPage, hasPrevPage, loadingMore } = usePagination({
+const { items, hasPrevPage, loadPrevPage, loadingMore, refresh } = usePagination({
   fetcher: async (page) => {
     const res = await api.get(`/messages?page=${page}&per_page=50`)
     return {
@@ -206,9 +133,13 @@ const { items, loadPrevPage, hasPrevPage, loadingMore } = usePagination({
       currentPage: res.pagination.current_page,
     }
   },
-  direction: 'prepend',      // novas páginas entram no topo
-  getKey: (msg) => msg._id,  // chave para deduplicação
+  direction: "prepend",
+  getKey: (msg) => msg._id,
 })
+
+useEffect(() => {
+  refresh() // load initial page
+}, [refresh])
 
 <ChatVirtualList
   data={items}
@@ -216,31 +147,82 @@ const { items, loadPrevPage, hasPrevPage, loadingMore } = usePagination({
   itemContent={(_, item) => <Message data={item} />}
   onStartReached={hasPrevPage ? loadPrevPage : undefined}
   components={{
-    Header: () => loadingMore ? <Spinner /> : null,
+    Header: () => (loadingMore ? <Spinner /> : null),
   }}
 />
 ```
 
----
+## Best practices
 
-## Boas práticas
+- Always use stable keys in `computeItemKey`.
+- Keep `itemContent` lightweight.
+- Start with a realistic `estimatedItemSize`.
+- Keep `overscan` low unless you need smoother very fast scrolling.
+- Prefer `scrollModifier` over deprecated APIs (`prepareAnchor`, `scrollToMessageKey`).
 
-- Use **chave estável** em `computeItemKey`
-- Evite lógica pesada em `itemContent`
-- Padronize paginação e ordenação no back-end
-- Ajuste `estimatedItemSize` para o tipo de item predominante
-- Mantenha `overscan` baixo e só aumente se houver necessidade real
+## Internals (simple)
 
----
+- `OffsetMap`: stores cumulative offsets per item
+- Anchor snapshot: keeps visual position stable on prepend
+- Per-item `ResizeObserver`: updates real row heights
+- Binary search: quickly finds visible range
 
-## Como funciona internamente
+## Keywords and discoverability
 
-- **OffsetMap:** calcula offsets acumulados por item
-- **Âncora de scroll:** preserva posição ao prepend
-- **ResizeObserver por item:** mede altura real ao renderizar
-- **Busca binária:** encontra faixa visível com eficiência
+If your goal is npm discovery, keywords belong in `package.json` (not only in README text).
 
----
+Suggested scope for this lib:
+- `react`
+- `virtual-list`
+- `virtualization`
+- `virtual-scroll`
+- `chat`
+- `infinite-scroll`
+- `scroll-anchor`
+
+## Copy-paste AI prompt
+
+Use this prompt in ChatGPT/Claude/Cursor/GitHub Copilot Chat:
+
+```text
+You are a senior React engineer. Integrate the npm library `react-anchorlist` into my app.
+
+Context:
+- Stack: [React version + framework]
+- Data type: [message/ticket/feed item shape]
+- Item unique key: [id field]
+- List container height strategy: [fixed/flex/full-screen]
+
+Goal:
+Implement a production-ready virtualized list with smooth scrolling and correct pagination behavior.
+
+Requirements:
+1) Use `ChatVirtualList` for chat-like UX (prepend older items at top).
+2) Use stable `computeItemKey`.
+3) Use `scrollModifier` commands correctly:
+   - before loading older items: `{ id: uniqueId, type: "prepend" }`
+   - when appending new realtime items: use append/items-change behavior when appropriate
+   - use `jump-to-key` for "scroll to message"
+4) Keep `followOutput="auto"` and expose `onAtBottomChange`.
+5) Wire `onStartReached` and/or `onEndReached` to my pagination functions.
+6) Add proper TypeScript types.
+7) Include minimal CSS/container setup so scrolling works (`height` + `overflow`).
+8) Avoid deprecated APIs (`prepareAnchor`, `scrollToMessageKey`) unless migration support is explicitly requested.
+
+Deliverables:
+- Full component code ready to paste.
+- State management for `scrollModifier`.
+- Example handlers: `loadOlderMessages`, `loadNewerMessages`.
+- Brief explanation of why the scroll stays stable on prepend.
+- Optional: a second example using `VirtualList` for non-chat pages.
+
+Project data to use:
+- Messages state variable: [name here]
+- Pagination function names: [names here]
+- Message row component name: [name here]
+
+Return clean, runnable code with no placeholders left.
+```
 
 ## License
 

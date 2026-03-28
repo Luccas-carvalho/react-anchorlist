@@ -94,6 +94,9 @@ function ChatVirtualListInner<T>(
         overflow: "auto",
         height: "100%",
         position: "relative",
+        // Prevent browser native scroll anchoring from fighting
+        // the library prepend compensation logic.
+        overflowAnchor: "none",
         overscrollBehaviorY: "contain",
         ...style,
       }}

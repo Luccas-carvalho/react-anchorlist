@@ -7,12 +7,12 @@ import { useScrollToIndex } from "./useScrollToIndex"
 import type { AnchorSnapshot, UseVirtualEngineReturn, VirtualItem } from "../types"
 
 /**
- * Core virtual engine — v0.3.0
+ * Core virtual engine — v0.4.0
  *
- * Key behavior:
- * - Jump correction is accumulated and flushed once per frame.
- * - Logical anchor snapshot (key + intra-item offset) is supported.
- * - Settling on initial bottom align stops by stability condition.
+ * Key change from v0.3: scroll compensation is applied SYNCHRONOUSLY
+ * inside measureItem instead of being batched via rAF. This eliminates
+ * the one-frame delay that caused visible flicker/drift during scroll
+ * and after prepend anchor restoration.
  */
 export function useVirtualEngine<T>(options: {
   items: T[]
@@ -42,13 +42,6 @@ export function useVirtualEngine<T>(options: {
 
   const settlingRef = useRef(false)
   const settlingRafRef = useRef<number | null>(null)
-
-  // Jump correction pipeline
-  const jumpRef = useRef(0)
-  const pendingJumpRef = useRef(0)
-  const flushedJumpRef = useRef(0)
-  const jumpFlushRafRef = useRef<number | null>(null)
-  const jumpAwaitingAckRef = useRef(false)
 
   const [, setTick] = useState(0)
   const forceRender = useCallback(() => setTick((t) => t + 1), [])
@@ -91,7 +84,6 @@ export function useVirtualEngine<T>(options: {
     } else if (newCount < prevCount) {
       om.resize(newCount)
     } else {
-      // Same length but identity changed (swap/edit/replace)
       om.resize(newCount)
     }
 
@@ -106,26 +98,7 @@ export function useVirtualEngine<T>(options: {
     prevLastKeyRef.current = lastKey
   }
 
-  const flushJump = useCallback(() => {
-    if (jumpFlushRafRef.current !== null) return
-    jumpFlushRafRef.current = requestAnimationFrame(() => {
-      jumpFlushRafRef.current = null
-      const el = scrollerRef.current
-      if (!el) return
-
-      const jump = jumpRef.current
-      if (Math.abs(jump) < 0.01) return
-
-      jumpRef.current = 0
-      pendingJumpRef.current += jump
-      flushedJumpRef.current += jump
-      el.scrollTop += jump
-      scrollTopRef.current = el.scrollTop
-      jumpAwaitingAckRef.current = true
-      forceRender()
-    })
-  }, [forceRender])
-
+  // Scroll handler — rAF throttled
   useEffect(() => {
     const el = scrollerRef.current
     if (!el) return
@@ -136,14 +109,6 @@ export function useVirtualEngine<T>(options: {
         rafIdRef.current = null
         scrollTopRef.current = el.scrollTop
         containerHeightRef.current = el.clientHeight
-
-        if (jumpAwaitingAckRef.current) {
-          // Jump was flushed in the previous frame and now reflected in scroll.
-          jumpAwaitingAckRef.current = false
-          pendingJumpRef.current = 0
-          flushedJumpRef.current = 0
-        }
-
         forceRender()
       })
     }
@@ -155,13 +120,10 @@ export function useVirtualEngine<T>(options: {
         cancelAnimationFrame(rafIdRef.current)
         rafIdRef.current = null
       }
-      if (jumpFlushRafRef.current !== null) {
-        cancelAnimationFrame(jumpFlushRafRef.current)
-        jumpFlushRafRef.current = null
-      }
     }
   }, [forceRender])
 
+  // Container resize
   useEffect(() => {
     const el = scrollerRef.current
     if (!el) return
@@ -177,6 +139,7 @@ export function useVirtualEngine<T>(options: {
     return () => observer.disconnect()
   }, [forceRender])
 
+  // Initial alignment
   useLayoutEffect(() => {
     if (initialScrollDone.current || items.length === 0) return
     const el = scrollerRef.current
@@ -226,6 +189,7 @@ export function useVirtualEngine<T>(options: {
     initialScrollDone.current = true
   }, [initialAlignment, items.length])
 
+  // Reset when items go to 0
   useEffect(() => {
     if (items.length !== 0) return
     initialScrollDone.current = false
@@ -236,6 +200,14 @@ export function useVirtualEngine<T>(options: {
     }
   }, [items.length])
 
+  /**
+   * measureItem — SYNCHRONOUS scroll compensation.
+   *
+   * When an item above the viewport changes size, we adjust scrollTop
+   * immediately (no rAF delay). This prevents the one-frame visual
+   * jump that occurs when offsets change in one frame but scrollTop
+   * only catches up in the next.
+   */
   const measureItem = useCallback((key: string | number, size: number) => {
     const om = offsetMapRef.current
     if (!om) return
@@ -250,19 +222,23 @@ export function useVirtualEngine<T>(options: {
     const oldSize = om.getSize(index)
     const delta = size - oldSize
 
+    // Apply scroll compensation SYNCHRONOUSLY before updating the offset map.
+    // Only compensate if the item's TOP edge is above the viewport top.
+    // Using the top edge (not bottom) prevents false positives for items
+    // that just appeared at the bottom (appended messages).
     const el = scrollerRef.current
     if (el && !settlingRef.current && delta !== 0) {
-      const itemBottom =
-        om.getOffset(index) + oldSize + (innerRef.current?.offsetTop ?? 0)
-      if (itemBottom < el.scrollTop) {
-        jumpRef.current += delta
-        flushJump()
+      const itemTop =
+        om.getOffset(index) + (innerRef.current?.offsetTop ?? 0)
+      if (itemTop < el.scrollTop) {
+        el.scrollTop += delta
+        scrollTopRef.current = el.scrollTop
       }
     }
 
     const changed = om.setSize(index, size)
     if (changed) forceRender()
-  }, [flushJump, forceRender])
+  }, [forceRender])
 
   const scrollToOffset = useCallback(
     (offset: number, behavior: ScrollBehavior = "auto") => {
@@ -285,10 +261,21 @@ export function useVirtualEngine<T>(options: {
     const offsets = om.getOffsets()
     const firstVisible = findFirstVisibleIndex(offsets, adjustedScrollTop)
     const key = prevKeysRef.current[firstVisible] ?? null
+    const candidates: NonNullable<AnchorSnapshot["candidates"]> = []
+
+    for (let i = firstVisible; i < Math.min(om.count, firstVisible + 6); i++) {
+      const candidateKey = prevKeysRef.current[i] ?? null
+      if (candidateKey === null) continue
+      candidates.push({
+        key: candidateKey,
+        offsetWithinItem: adjustedScrollTop - om.getOffset(i),
+      })
+    }
 
     return {
       key,
       offsetWithinItem: adjustedScrollTop - om.getOffset(firstVisible),
+      candidates,
       scrollTop: el.scrollTop,
       scrollHeight: el.scrollHeight,
     }
@@ -306,6 +293,7 @@ export function useVirtualEngine<T>(options: {
     []
   )
 
+  // Compute virtual items — during render, always fresh
   const om = offsetMapRef.current
   const totalSize = om ? om.totalSize() : 0
 

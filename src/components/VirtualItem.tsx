@@ -11,6 +11,9 @@ interface VirtualItemProps {
  * Wrapper for a single virtualized item.
  * - Positioned with CSS transform (GPU compositor — no layout reflow)
  * - ResizeObserver measures real height and reports back to the engine
+ * - NO minHeight — items are absolutely positioned so their height
+ *   doesn't affect siblings. This ensures a single-pass measurement
+ *   (no two-step estimate→real that causes visible blinks).
  */
 export function VirtualItemComponent({
   virtualItem,
@@ -18,15 +21,12 @@ export function VirtualItemComponent({
   children,
 }: VirtualItemProps) {
   const ref = useRef<HTMLDivElement>(null)
-  const measuredRef = useRef(false)
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    measuredRef.current = false
     const observer = new ResizeObserver(([entry]) => {
       if (entry) {
-        measuredRef.current = true
         measureItem(virtualItem.key, entry.contentRect.height)
       }
     })
@@ -40,15 +40,8 @@ export function VirtualItemComponent({
       style={{
         position: "absolute",
         top: 0,
-        // transform instead of top: avoids reflow, uses GPU compositor layer
         transform: `translateY(${virtualItem.start}px)`,
         width: "100%",
-        // Only reserve estimated height before first measurement.
-        // After measurement, let the item take its natural height so
-        // ResizeObserver can accurately report the real size.
-        // Without this, items can never be smaller than estimatedItemSize,
-        // which distorts offsets and total height.
-        minHeight: measuredRef.current ? undefined : virtualItem.size,
       }}
     >
       {children}

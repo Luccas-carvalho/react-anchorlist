@@ -13,10 +13,10 @@ export function useFollowOutput(params: {
   firstKey: string | number | null
   lastKey: string | number | null
   isAtBottom: boolean
-  scrollToIndex: (index: number, opts?: ScrollToIndexOpts) => void
+  scrollerRef: React.RefObject<HTMLDivElement>
   mode: "auto" | "smooth" | false
 }): void {
-  const { itemCount, firstKey, lastKey, isAtBottom, scrollToIndex, mode } = params
+  const { itemCount, firstKey, lastKey, isAtBottom, scrollerRef, mode } = params
 
   const prevCountRef = useRef(itemCount)
   const prevFirstKeyRef = useRef<string | number | null>(firstKey)
@@ -42,14 +42,21 @@ export function useFollowOutput(params: {
     const isAppend = countIncreased && firstUnchanged && lastChanged
 
     if (isAppend && isAtBottom && itemCount > 0) {
-      scrollToIndex(itemCount - 1, {
-        align: "end",
-        behavior: mode === "smooth" ? "smooth" : "auto",
-      })
+      const el = scrollerRef.current
+      if (el) {
+        // Use scrollHeight directly instead of scrollToIndex with estimated offsets.
+        // This avoids the blink caused by offset estimates being wrong on the first
+        // frame, then corrected after ResizeObserver measures the real height.
+        if (mode === "smooth") {
+          el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+        } else {
+          el.scrollTop = el.scrollHeight
+        }
+      }
     }
 
     prevCountRef.current = itemCount
     prevFirstKeyRef.current = firstKey
     prevLastKeyRef.current = lastKey
-  }, [itemCount, firstKey, lastKey, isAtBottom, scrollToIndex, mode])
+  }, [itemCount, firstKey, lastKey, isAtBottom, scrollerRef, mode])
 }

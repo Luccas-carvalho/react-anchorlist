@@ -66,7 +66,10 @@ export function useChatVirtualizer<T>(options: {
   // Force a synchronous re-render after anchor restoration so that
   // virtualItems are recomputed with corrected scrollTop before paint.
   const [, setAnchorTick] = useState(0)
-  const onAnchorRestored = useCallback(() => setAnchorTick((t) => t + 1), [])
+  const onAnchorRestored = useCallback(() => {
+    setAnchorTick((t) => t + 1)
+  }, [])
+
   const { prepareAnchor } = useScrollAnchor({
     scrollerRef: engine.scrollerRef,
     itemCount: items.length,
@@ -85,7 +88,7 @@ export function useChatVirtualizer<T>(options: {
     firstKey,
     lastKey,
     isAtBottom,
-    scrollToIndex: engine.scrollToIndex,
+    scrollerRef: engine.scrollerRef,
     mode: followOutput ?? false,
   })
 

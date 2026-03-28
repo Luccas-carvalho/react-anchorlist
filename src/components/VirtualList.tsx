@@ -53,6 +53,8 @@ export function VirtualList<T>({
         overflow: "auto",
         height: "100%",
         position: "relative",
+        // Keep scrolling behavior deterministic when items are inserted above.
+        overflowAnchor: "none",
         overscrollBehaviorY: "contain",
         ...style,
       }}

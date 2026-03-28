@@ -50,6 +50,14 @@ export type ChatScrollModifier =
 export interface AnchorSnapshot {
   key: string | number | null
   offsetWithinItem: number
+  /**
+   * Additional visible-item candidates captured in viewport order.
+   * Used when the primary key is no longer resolvable after list mutation.
+   */
+  candidates?: Array<{
+    key: string | number
+    offsetWithinItem: number
+  }>
   scrollTop: number
   scrollHeight: number
 }

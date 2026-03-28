@@ -135,6 +135,19 @@ describe("ChatVirtualList", () => {
     expect(container).toBeTruthy()
   })
 
+  it("disables native overflow anchoring on scroller", () => {
+    const { container } = render(
+      <ChatVirtualList
+        data={makeItems(4)}
+        computeItemKey={(_, item: Item) => item.id}
+        itemContent={(_, item: Item) => <div>{item.text}</div>}
+      />
+    )
+    const scroller = container.firstElementChild as HTMLDivElement | null
+    expect(scroller).toBeTruthy()
+    expect(scroller?.style.overflowAnchor).toBe("none")
+  })
+
   it("fires onStartReached for short conversations initialized at bottom", async () => {
     const onStartReached = vi.fn()
     const { container } = render(

@@ -1,7 +1,21 @@
 {
   "name": "react-anchorlist",
-  "version": "0.3.1",
+  "version": "0.3.13",
   "description": "High-performance chat virtualizer for React — no flicker, no hacks",
+  "keywords": [
+    "react",
+    "virtual-list",
+    "virtualization",
+    "virtual-scroll",
+    "windowing",
+    "chat",
+    "chat-ui",
+    "infinite-scroll",
+    "scroll-anchor",
+    "prepend",
+    "feed",
+    "typescript"
+  ],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

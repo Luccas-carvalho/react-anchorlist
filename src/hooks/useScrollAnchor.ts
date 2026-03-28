@@ -9,6 +9,28 @@ interface UseScrollAnchorOptions {
   onRestored?: () => void
 }
 
+export function resolveAnchorTargetFromSnapshot(params: {
+  snapshot: AnchorSnapshot
+  currentScrollHeight: number
+  resolveAnchorTop: (key: string | number, offsetWithinItem: number) => number | null
+}): number {
+  const { snapshot, currentScrollHeight, resolveAnchorTop } = params
+
+  if (snapshot.key !== null) {
+    const primary = resolveAnchorTop(snapshot.key, snapshot.offsetWithinItem)
+    if (primary !== null) return primary
+  }
+
+  if (snapshot.candidates?.length) {
+    for (const candidate of snapshot.candidates) {
+      const target = resolveAnchorTop(candidate.key, candidate.offsetWithinItem)
+      if (target !== null) return target
+    }
+  }
+
+  return snapshot.scrollTop + (currentScrollHeight - snapshot.scrollHeight)
+}
+
 /**
  * Keeps viewport anchored when items are prepended.
  *
@@ -69,14 +91,11 @@ export function useScrollAnchor(options: UseScrollAnchorOptions): { prepareAncho
     anchorPending.current = false
 
     const restore = () => {
-      let target: number | null = null
-      if (snapshot.key !== null) {
-        target = resolveAnchorTop(snapshot.key, snapshot.offsetWithinItem)
-      }
-
-      if (target === null) {
-        target = snapshot.scrollTop + (el.scrollHeight - snapshot.scrollHeight)
-      }
+      const target = resolveAnchorTargetFromSnapshot({
+        snapshot,
+        currentScrollHeight: el.scrollHeight,
+        resolveAnchorTop,
+      })
 
       if (Number.isFinite(target) && Math.abs(el.scrollTop - target) > 1) {
         el.scrollTop = target
