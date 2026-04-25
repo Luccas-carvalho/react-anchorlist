@@ -42,6 +42,11 @@ export function VirtualItemComponent({
         top: 0,
         transform: `translateY(${virtualItem.start}px)`,
         width: "100%",
+        // Promote each item to its own compositor layer so translateY
+        // updates bypass main-thread layout and paint.
+        willChange: "transform",
+        // Contain layout so ResizeObserver changes don't propagate upward.
+        contain: "layout",
       }}
     >
       {children}

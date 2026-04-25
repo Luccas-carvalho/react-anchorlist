@@ -56,8 +56,11 @@ export function useMeasurePipeline(options: MeasurePipelineOptions) {
       changed = true
       sizeCacheRef.current.set(key, size)
 
-      // Accumulate compensation only for items above the viewport top
-      if (el && !stateMachine.isRestoring()) {
+      // Accumulate compensation only for items above the viewport top.
+      // Skip during anchor restore AND during initial settling animation —
+      // both states own scrollTop and must not be fought.
+      const state = stateMachine.getState()
+      if (el && state !== "restoring" && state !== "animating") {
         const itemTop = om.getOffset(index) + innerOffset
         if (itemTop < el.scrollTop) {
           scrollDelta += size - oldSize

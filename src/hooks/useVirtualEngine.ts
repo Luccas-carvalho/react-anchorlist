@@ -4,7 +4,6 @@ import { ItemSizeCache } from "../core/itemSizeCache"
 import { KeyIndex } from "../core/keyIndex"
 import { detectMutation } from "../core/diff"
 import { captureAnchorSnapshot } from "../core/scrollAnchor"
-import { findFirstVisibleIndex, findLastVisibleIndex } from "../core/binarySearch"
 import { calcRenderRange } from "../core/rangeCalc"
 import { useScrollToIndex } from "./useScrollToIndex"
 import { useScrollStateMachine } from "./useScrollStateMachine"
@@ -143,6 +142,7 @@ export function useVirtualEngine<T>(options: {
       containerHeightRef.current = el.clientHeight
 
       settlingRef.current = true
+      stateMachine.transition("animating")
       if (settlingRafRef.current !== null) cancelAnimationFrame(settlingRafRef.current)
 
       const startedAt = performance.now()
@@ -152,6 +152,7 @@ export function useVirtualEngine<T>(options: {
       const settleBottom = () => {
         if (!settlingRef.current) {
           settlingRafRef.current = null
+          stateMachine.transition("idle")
           return
         }
 
@@ -169,6 +170,7 @@ export function useVirtualEngine<T>(options: {
         if (stableFrames >= 3 || elapsed >= 500) {
           settlingRef.current = false
           settlingRafRef.current = null
+          stateMachine.transition("idle")
           return
         }
 
@@ -186,11 +188,12 @@ export function useVirtualEngine<T>(options: {
     if (items.length !== 0) return
     initialScrollDone.current = false
     settlingRef.current = false
+    stateMachine.transition("idle")
     if (settlingRafRef.current !== null) {
       cancelAnimationFrame(settlingRafRef.current)
       settlingRafRef.current = null
     }
-  }, [items.length])
+  }, [items.length, stateMachine])
 
   // ── Imperative API ─────────────────────────────────────────────────────
   const scrollToOffset = useCallback(
@@ -242,14 +245,8 @@ export function useVirtualEngine<T>(options: {
   const virtualItems: VirtualItem<T>[] = []
 
   if (om && om.count > 0 && currentContainerHeight > 0) {
-    const offsets = om.getOffsets()
-    const sizes = om.getSizes()
-    const firstVisible = findFirstVisibleIndex(offsets, adjustedScrollTop)
-    const lastVisible = findLastVisibleIndex(
-      offsets,
-      sizes,
-      adjustedScrollTop + currentContainerHeight
-    )
+    const firstVisible = om.findIndexAtOffset(adjustedScrollTop)
+    const lastVisible = om.findIndexAtOffset(adjustedScrollTop + currentContainerHeight)
     const range = calcRenderRange({
       firstVisible,
       lastVisible,

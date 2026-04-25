@@ -44,13 +44,19 @@ export function useFollowOutput(params: {
     if (isAppend && isAtBottom && itemCount > 0) {
       const el = scrollerRef.current
       if (el) {
-        // Use scrollHeight directly instead of scrollToIndex with estimated offsets.
-        // This avoids the blink caused by offset estimates being wrong on the first
-        // frame, then corrected after ResizeObserver measures the real height.
+        // Use scrollHeight directly — avoids blink from estimated offsets being
+        // wrong on first frame, corrected only after ResizeObserver fires.
         if (mode === "smooth") {
           el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
         } else {
           el.scrollTop = el.scrollHeight
+          // One follow-up frame: catches ResizeObserver corrections for async
+          // content (images, embeds) that inflate scrollHeight after first paint.
+          requestAnimationFrame(() => {
+            if (el.isConnected && el.scrollHeight > el.scrollTop + el.clientHeight + 4) {
+              el.scrollTop = el.scrollHeight
+            }
+          })
         }
       }
     }

@@ -1,19 +1,33 @@
 import type { OffsetMap } from "./offsetMap"
 
+const MAX_ENTRIES = 2000
+
 /**
- * Persists measured item heights by key.
+ * LRU cache of measured item heights keyed by item key.
  * Survives re-renders and item reordering — heights are re-applied whenever
- * the OffsetMap is rebuilt.
+ * the OffsetMap is rebuilt. Evicts oldest entries above MAX_ENTRIES to
+ * prevent unbounded growth in long chat sessions.
  */
 export class ItemSizeCache {
   private cache: Map<string | number, number> = new Map()
 
   get(key: string | number): number | undefined {
-    return this.cache.get(key)
+    const val = this.cache.get(key)
+    if (val !== undefined) {
+      // LRU promote: move to end
+      this.cache.delete(key)
+      this.cache.set(key, val)
+    }
+    return val
   }
 
   set(key: string | number, size: number): void {
+    if (this.cache.has(key)) this.cache.delete(key)
     this.cache.set(key, size)
+    if (this.cache.size > MAX_ENTRIES) {
+      // Evict oldest (first entry in insertion-order Map)
+      this.cache.delete(this.cache.keys().next().value as string | number)
+    }
   }
 
   has(key: string | number): boolean {
@@ -28,7 +42,7 @@ export class ItemSizeCache {
     this.cache.clear()
   }
 
-  /** Re-applies all cached sizes to the OffsetMap using a key→index map */
+  /** Re-applies all cached sizes to the OffsetMap using a key→index map. */
   applyToOffsetMap(
     offsetMap: OffsetMap,
     keyToIndex: Map<string | number, number>
