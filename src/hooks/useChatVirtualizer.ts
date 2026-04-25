@@ -75,6 +75,7 @@ export function useChatVirtualizer<T>(options: {
     itemCount: items.length,
     captureAnchorSnapshot: engine.captureAnchorSnapshot,
     resolveAnchorTop: engine.resolveAnchorTop,
+    stateMachine: engine.stateMachine,
     onRestored: onAnchorRestored,
   })
 

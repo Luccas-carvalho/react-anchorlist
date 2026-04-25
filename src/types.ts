@@ -1,4 +1,5 @@
 import type * as React from "react"
+import type { ScrollStateMachine } from "./hooks/useScrollStateMachine"
 
 export interface VirtualItem<T = unknown> {
   key: string | number
@@ -162,6 +163,7 @@ export interface UseVirtualEngineReturn<T> {
   isAtTop: boolean
   isAtBottom: boolean
   scrollTop: number
+  stateMachine: ScrollStateMachine
 }
 
 export interface RenderRange {

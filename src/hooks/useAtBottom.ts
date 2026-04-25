@@ -1,22 +1,10 @@
 import { useEffect, useRef, useState } from "react"
 import type { AtBottomHysteresis } from "../types"
+import { resolveAtBottomState } from "../core/atBottom"
 
-interface AtBottomStateInput {
-  previous: boolean
-  distanceFromBottom: number
-  threshold: number
-  hysteresis?: AtBottomHysteresis
-}
-
-export function resolveAtBottomState(input: AtBottomStateInput): boolean {
-  const { previous, distanceFromBottom, threshold, hysteresis } = input
-  if (!hysteresis) return distanceFromBottom <= threshold
-
-  const enter = Math.max(0, hysteresis.enter)
-  const leave = Math.max(enter, hysteresis.leave)
-  if (previous) return distanceFromBottom <= leave
-  return distanceFromBottom <= enter
-}
+// Re-export for backward compat
+export { resolveAtBottomState } from "../core/atBottom"
+export type { AtBottomStateInput } from "../core/atBottom"
 
 /** Returns true when the scroll container is near the bottom. */
 export function useAtBottom(
