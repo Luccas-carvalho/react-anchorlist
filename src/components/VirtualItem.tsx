@@ -9,10 +9,17 @@ interface VirtualItemProps {
 
 /**
  * Wrapper for a single virtualized item.
- * - Positioned with CSS transform (GPU compositor — no layout reflow)
- * - useLayoutEffect: synchronous measure before paint → eliminates 1-frame flash of estimated sizes
- * - ResizeObserver: continuous measurement using borderBoxSize (includes padding, more accurate)
- * - NO minHeight — absolutely positioned items don't affect siblings
+ * - Positioned absolutely with translateY so each item lives at its own Y inside
+ *   the inner container, regardless of sibling render order. This lets the engine
+ *   render non-contiguous virtual items (e.g. force-rendered prepended items in
+ *   addition to the normal viewport range) without breaking layout.
+ * - useLayoutEffect synchronously measures via getBoundingClientRect right after
+ *   commit; combined with React's children-before-parent layout-effect order, this
+ *   feeds real heights to the offsetMap before anchor-restore runs in the parent.
+ * - ResizeObserver with borderBoxSize tracks subsequent height changes (image
+ *   decode, font load, content edits).
+ * - overflowAnchor: none disables the browser's automatic scroll-anchoring; the
+ *   library owns scroll preservation explicitly.
  */
 export function VirtualItemComponent({
   virtualItem,
@@ -21,8 +28,6 @@ export function VirtualItemComponent({
 }: VirtualItemProps) {
   const ref = useRef<HTMLDivElement>(null)
 
-  // Synchronous measurement before paint. Eliminates the 1-frame flash where
-  // estimated sizes are used before ResizeObserver fires asynchronously.
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
@@ -36,8 +41,6 @@ export function VirtualItemComponent({
     if (!el) return
     const observer = new ResizeObserver(([entry]) => {
       if (!entry) return
-      // borderBoxSize includes padding — more accurate than contentRect.
-      // Falls back to contentRect for older browsers.
       const size =
         entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
       measureItem(virtualItem.key, Math.round(size))
@@ -49,16 +52,16 @@ export function VirtualItemComponent({
   return (
     <div
       ref={ref}
+      data-index={virtualItem.index}
+      data-known-size={virtualItem.size}
       style={{
         position: "absolute",
         top: 0,
         transform: `translateY(${virtualItem.start}px)`,
         width: "100%",
-        // Promote each item to its own compositor layer so translateY
-        // updates bypass main-thread layout and paint.
         willChange: "transform",
-        // Contain layout so ResizeObserver changes don't propagate upward.
         contain: "layout",
+        overflowAnchor: "none",
       }}
     >
       {children}

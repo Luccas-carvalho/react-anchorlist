@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
 
-const LOG = (...args: unknown[]) => console.log("[anchorlist:engine]", ...args)
 import { OffsetMap } from "../core/offsetMap"
 import { ItemSizeCache } from "../core/itemSizeCache"
 import { KeyIndex } from "../core/keyIndex"
@@ -39,8 +38,16 @@ export function useVirtualEngine<T>(options: {
   const settlingRef = useRef(false)
   const settlingRafRef = useRef<number | null>(null)
 
-  // Track the last rendered virtual range to skip renders when range is unchanged.
   const prevRangeRef = useRef<{ start: number; end: number } | null>(null)
+
+  // Set when a prepend mutation just happened — forces the next render to include
+  // ALL prepended items in the virtualItems output (in addition to the normal
+  // overscan range). This guarantees those items mount, get measured via
+  // useLayoutEffect+ResizeObserver, and have real sizes in the offsetMap BEFORE
+  // useScrollAnchor's anchor-restore layoutEffect runs (children-before-parent).
+  // Cleared by clearJustPrepended() invoked from onRestored, then a re-render
+  // shrinks back to the normal range.
+  const justPrependedCountRef = useRef(0)
 
   const [, setTick] = useState(0)
   const forceRender = useCallback(() => setTick((t) => t + 1), [])
@@ -51,7 +58,6 @@ export function useVirtualEngine<T>(options: {
     offsetMapRef.current = new OffsetMap(items.length, estimatedItemSize)
   }
 
-  // ── Mutation detection & OffsetMap sync ────────────────────────────────
   const newKeys = items.map((item, i) => getKey(item, i))
   const prevKeys = prevKeysRef.current
   const keysChanged =
@@ -63,17 +69,6 @@ export function useVirtualEngine<T>(options: {
     const om = offsetMapRef.current!
     const mutation = detectMutation(prevKeys, newKeys)
 
-    LOG("🔑 mutation detected", {
-      type: mutation.type,
-      count: (mutation as { count?: number }).count,
-      prevLen: prevKeys.length,
-      newLen: newKeys.length,
-      prevFirst: prevKeys[0],
-      newFirst: newKeys[0],
-      prevLast: prevKeys[prevKeys.length - 1],
-      newLast: newKeys[newKeys.length - 1],
-    })
-
     switch (mutation.type) {
       case "initial":
         om.resize(newKeys.length)
@@ -82,20 +77,17 @@ export function useVirtualEngine<T>(options: {
         om.resize(0)
         break
       case "prepend": {
-        // Per-item estimates: most accurate when caller knows item types.
-        // Falls back to average of measured items, then estimatedItemSize.
         if (getItemEstimate) {
           const perItemSizes: number[] = []
           for (let i = 0; i < mutation.count; i++) {
             perItemSizes.push(getItemEstimate(items[i] as T, i))
           }
-          LOG("📐 prepend per-item estimates", { count: perItemSizes.length, sample: perItemSizes.slice(0, 5) })
           om.prepend(mutation.count, perItemSizes)
         } else {
           const avgSize = sizeCacheRef.current.getAverageSize() ?? estimatedItemSize
-          LOG("📐 prepend avgSize", { avgSize, estimated: estimatedItemSize })
           om.prepend(mutation.count, Math.round(avgSize))
         }
+        justPrependedCountRef.current = mutation.count
         break
       }
       case "append":
@@ -108,11 +100,9 @@ export function useVirtualEngine<T>(options: {
     keyIndexRef.current.rebuild(newKeys)
     sizeCacheRef.current.applyToOffsetMap(om, new Map(newKeys.map((k, i) => [k, i])))
     prevKeysRef.current = newKeys
-    // Invalidate range cache so next render recomputes
     prevRangeRef.current = null
   }
 
-  // ── Measure pipeline ────────────────────────────────────────────────────
   const { measureItem, flushPendingSync } = useMeasurePipeline({
     offsetMapRef,
     sizeCacheRef,
@@ -123,14 +113,22 @@ export function useVirtualEngine<T>(options: {
     onBatchFlushed: forceRender,
   })
 
-  // ── Scroll handler — rAF throttled + flushSync ─────────────────────────
+  // Imperative clear used by useScrollAnchor's onRestored callback:
+  // releases the expanded render range so the next render shrinks back
+  // to the normal overscan window.
+  const clearJustPrepended = useCallback(() => {
+    if (justPrependedCountRef.current > 0) {
+      justPrependedCountRef.current = 0
+      forceRender()
+    }
+  }, [forceRender])
+
+  // Scroll handler — rAF throttled + flushSync
   useEffect(() => {
     const el = scrollerRef.current
     if (!el) return
 
     const handler = () => {
-      // Update scrollTop immediately (outside RAF) so any in-flight render
-      // or measurement can read the freshest position without waiting a frame.
       scrollTopRef.current = el.scrollTop
 
       if (rafIdRef.current !== null) return
@@ -140,8 +138,6 @@ export function useVirtualEngine<T>(options: {
         const nextScrollTop = el.scrollTop
         const nextHeight = el.clientHeight
 
-        // Skip render if the visible range hasn't changed.
-        // Avoids flushSync overhead for micro-scrolls within item boundaries.
         const om = offsetMapRef.current
         if (om && om.count > 0) {
           const innerOffset = innerRef.current?.offsetTop ?? 0
@@ -156,8 +152,6 @@ export function useVirtualEngine<T>(options: {
         scrollTopRef.current = nextScrollTop
         containerHeightRef.current = nextHeight
 
-        // flushSync forces React to render synchronously within this frame,
-        // preventing the 1-frame visual lag seen with async batched updates.
         flushSync(forceRender)
       })
     }
@@ -172,7 +166,7 @@ export function useVirtualEngine<T>(options: {
     }
   }, [forceRender])
 
-  // ── Container resize ───────────────────────────────────────────────────
+  // Container resize
   useEffect(() => {
     const el = scrollerRef.current
     if (!el) return
@@ -182,7 +176,6 @@ export function useVirtualEngine<T>(options: {
     const observer = new ResizeObserver(([entry]) => {
       if (!entry) return
       containerHeightRef.current = entry.contentRect.height
-      // Invalidate range cache on resize so we recompute
       prevRangeRef.current = null
       forceRender()
     })
@@ -190,7 +183,7 @@ export function useVirtualEngine<T>(options: {
     return () => observer.disconnect()
   }, [forceRender])
 
-  // ── Initial alignment ──────────────────────────────────────────────────
+  // Initial alignment
   useLayoutEffect(() => {
     if (initialScrollDone.current || items.length === 0) return
     const el = scrollerRef.current
@@ -243,7 +236,7 @@ export function useVirtualEngine<T>(options: {
     initialScrollDone.current = true
   }, [initialAlignment, items.length])
 
-  // ── Reset when items cleared ───────────────────────────────────────────
+  // Reset when items cleared
   useEffect(() => {
     if (items.length !== 0) return
     initialScrollDone.current = false
@@ -256,7 +249,7 @@ export function useVirtualEngine<T>(options: {
     }
   }, [items.length, stateMachine])
 
-  // ── Imperative API ─────────────────────────────────────────────────────
+  // Imperative API
   const scrollToOffset = useCallback(
     (offset: number, behavior: ScrollBehavior = "auto") => {
       scrollerRef.current?.scrollTo({ top: offset, behavior })
@@ -293,7 +286,7 @@ export function useVirtualEngine<T>(options: {
     []
   )
 
-  // ── Virtual items computation ──────────────────────────────────────────
+  // Virtual items computation
   const om = offsetMapRef.current
   const totalSize = om ? om.totalSize() : 0
 
@@ -304,6 +297,7 @@ export function useVirtualEngine<T>(options: {
   const adjustedScrollTop = Math.max(0, currentScrollTop - innerOffset)
 
   const virtualItems: VirtualItem<T>[] = []
+  const renderedIndices = new Set<number>()
 
   if (om && om.count > 0 && currentContainerHeight > 0) {
     const firstVisible = om.findIndexAtOffset(adjustedScrollTop)
@@ -316,13 +310,17 @@ export function useVirtualEngine<T>(options: {
     })
 
     for (let i = range.start; i <= range.end && i < items.length; i++) {
-      virtualItems.push({
-        key: keyIndexRef.current.getKey(i) ?? getKey(items[i]!, i),
-        index: i,
-        start: om.getOffset(i),
-        size: om.getSize(i),
-        data: items[i]!,
-      })
+      renderedIndices.add(i)
+    }
+
+    // Just-prepended expansion: include indices 0..count-1 so they get measured.
+    // Skipped the first time the prepended count exceeds the configured ceiling
+    // (1000 items) — at that scale, force-rendering all is too expensive.
+    const prepCount = justPrependedCountRef.current
+    if (prepCount > 0 && prepCount <= 1000) {
+      for (let i = 0; i < prepCount && i < items.length; i++) {
+        renderedIndices.add(i)
+      }
     }
   } else if (om && om.count > 0) {
     const batchSize = Math.min(items.length, overscan * 2 + 1)
@@ -331,6 +329,13 @@ export function useVirtualEngine<T>(options: {
       : 0
     const endIdx = startIdx + batchSize - 1
     for (let i = startIdx; i <= endIdx; i++) {
+      renderedIndices.add(i)
+    }
+  }
+
+  if (om) {
+    const sortedIndices = [...renderedIndices].sort((a, b) => a - b)
+    for (const i of sortedIndices) {
       virtualItems.push({
         key: keyIndexRef.current.getKey(i) ?? getKey(items[i]!, i),
         index: i,
@@ -360,5 +365,6 @@ export function useVirtualEngine<T>(options: {
     scrollTop: currentScrollTop,
     stateMachine,
     flushPendingSync,
-  }
+    clearJustPrepended,
+  } as UseVirtualEngineReturn<T> & { clearJustPrepended: () => void }
 }

@@ -1,10 +1,9 @@
-import { useCallback, useRef } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import type { OffsetMap } from "../core/offsetMap"
 import type { ItemSizeCache } from "../core/itemSizeCache"
 import type { KeyIndex } from "../core/keyIndex"
 import type { ScrollStateMachine } from "./useScrollStateMachine"
-
-const LOG = (...args: unknown[]) => console.log("[anchorlist:measure]", ...args)
+import { createDeviationController, type DeviationController } from "../core/deviation"
 
 interface MeasurePipelineOptions {
   offsetMapRef: React.MutableRefObject<OffsetMap | null>
@@ -16,75 +15,52 @@ interface MeasurePipelineOptions {
   onBatchFlushed: () => void
 }
 
-// iOS Safari does not reliably honour scrollBy() while momentum scroll is in progress.
-// Detect once and cache — UA string is stable for the session.
-const _isMobileSafari =
-  typeof navigator !== "undefined" &&
-  /iP(ad|od|hone)/i.test(navigator.userAgent) &&
-  /WebKit/i.test(navigator.userAgent) &&
-  !/CriOS|FxiOS/.test(navigator.userAgent)
-
 /**
  * Batches ResizeObserver measurements into a single RAF flush.
  *
- * Problem solved: the old synchronous measureItem applied scroll compensation
- * per-item. With 20+ items measuring simultaneously (initial render, font load,
- * image decode), that triggered 20+ synchronous scrollTop writes, each forcing
- * a layout and potentially fighting the anchor restoration.
+ * Strategy:
+ *   - Each VirtualItemComponent calls measureItem(key, size) on every observed
+ *     resize. We accumulate in pendingRef until the next animation frame.
+ *   - flush() applies all sizes to the offsetMap, then for items whose ITEM_TOP
+ *     was above the scroll position (i.e. above the viewport), accumulates a
+ *     scrollDelta — the visual shift the user would see if we did nothing.
+ *   - The DeviationController applies that delta as a CSS transform first
+ *     (instant, frame-coalesced) and then scrollBy on the next RAF, eliminating
+ *     the single-frame visible jump that scrollBy alone produces. On mobile
+ *     Safari mid-momentum, it falls back to pure marginTop accumulation since
+ *     scrollBy is silently dropped during touch-driven scroll.
+ *   - Compensation is suppressed while the state machine is in `restoring`
+ *     (anchor restore owns scrollTop) or `animating` (initial alignment).
  *
- * Solution: accumulate all measurements in a Map, flush in one RAF with a
- * single scroll correction = sum of all deltas above the viewport.
- *
- * Scroll correction uses scrollBy() (relative, atomic) instead of scrollTop +=
- * (read-modify-write, prone to races with the browser's scroll handling).
- * On mobile Safari during active momentum scroll, we use a CSS deviation
- * (translateY on the inner container) which is reset once scrolling stops.
+ * flushPendingSync exists for useScrollAnchor's restore: it applies pending
+ * measurements to the offsetMap WITHOUT touching scroll, since the restore
+ * computes its own target.
  */
 export function useMeasurePipeline(options: MeasurePipelineOptions) {
   const { offsetMapRef, sizeCacheRef, keyIndexRef, scrollerRef, innerRef, stateMachine, onBatchFlushed } = options
 
   const pendingRef = useRef(new Map<string | number, number>())
   const rafRef = useRef<number | null>(null)
-  // CSS deviation applied to innerRef on mobile Safari during active scroll
-  const deviationRef = useRef(0)
-  // Whether the scroll container is currently mid-momentum (touchmove / wheel inertia)
-  const isScrollingRef = useRef(false)
-  const scrollEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const deviationRef = useRef<DeviationController | null>(null)
+  if (deviationRef.current === null) {
+    deviationRef.current = createDeviationController()
+  }
 
-  // Track scroll activity so we can choose the right compensation strategy.
-  // We attach this listener lazily when the element is available.
-  const attachScrollTrackerIfNeeded = useCallback(() => {
-    const el = scrollerRef.current
-    if (!el || (el as HTMLElement & { __anchorScrollTracked?: boolean }).__anchorScrollTracked) return
-    ;(el as HTMLElement & { __anchorScrollTracked?: boolean }).__anchorScrollTracked = true
-
-    const onScroll = () => {
-      isScrollingRef.current = true
-      if (scrollEndTimerRef.current !== null) clearTimeout(scrollEndTimerRef.current)
-      scrollEndTimerRef.current = setTimeout(() => {
-        isScrollingRef.current = false
-        scrollEndTimerRef.current = null
-
-        // Flush any pending deviation accumulated during mobile Safari scroll
-        if (_isMobileSafari && deviationRef.current !== 0 && innerRef.current) {
-          const accumulated = deviationRef.current
-          deviationRef.current = 0
-          innerRef.current.style.transform = ""
-          el.scrollBy({ top: accumulated })
-        }
-      }, 150)
-    }
-
-    el.addEventListener("scroll", onScroll, { passive: true })
-  }, [scrollerRef, innerRef])
+  // Attach DeviationController as soon as both refs resolve.
+  useEffect(() => {
+    const inner = innerRef.current
+    const scroller = scrollerRef.current
+    const dev = deviationRef.current
+    if (!inner || !scroller || !dev) return
+    dev.attach(inner, scroller)
+    return () => dev.detach()
+  }, [innerRef, scrollerRef])
 
   const flush = useCallback(() => {
     rafRef.current = null
     const pending = pendingRef.current
     if (pending.size === 0) return
     pendingRef.current = new Map()
-
-    attachScrollTrackerIfNeeded()
 
     const om = offsetMapRef.current
     if (!om) return
@@ -104,9 +80,6 @@ export function useMeasurePipeline(options: MeasurePipelineOptions) {
       changed = true
       sizeCacheRef.current.set(key, size)
 
-      // Accumulate compensation only for items above the viewport top.
-      // Skip during anchor restore AND during initial settling animation —
-      // both states own scrollTop and must not be interfered with.
       const state = stateMachine.getState()
       if (el && state !== "restoring" && state !== "animating") {
         const itemTop = om.getOffset(index) + innerOffset
@@ -116,32 +89,12 @@ export function useMeasurePipeline(options: MeasurePipelineOptions) {
       }
     }
 
-    if (el && scrollDelta !== 0) {
-      const state = stateMachine.getState()
-      LOG("📏 flush scrollDelta", {
-        scrollDelta,
-        state,
-        isRestoring: stateMachine.isRestoring(),
-        scrollTop: el.scrollTop,
-        scrollHeight: el.scrollHeight,
-      })
-    }
     if (el && scrollDelta !== 0 && !stateMachine.isRestoring()) {
-      if (_isMobileSafari && isScrollingRef.current) {
-        deviationRef.current += scrollDelta
-        if (innerRef.current) {
-          innerRef.current.style.transform = `translateY(${-deviationRef.current}px)`
-        }
-      } else {
-        el.scrollBy({ top: scrollDelta })
-        LOG("📏 scrollBy applied", { scrollDelta, newScrollTop: el.scrollTop })
-      }
-    } else if (el && scrollDelta !== 0 && stateMachine.isRestoring()) {
-      LOG("📏 scrollDelta SKIPPED — state is restoring")
+      deviationRef.current?.schedule(scrollDelta)
     }
 
     if (changed) onBatchFlushed()
-  }, [offsetMapRef, sizeCacheRef, keyIndexRef, scrollerRef, innerRef, stateMachine, onBatchFlushed, attachScrollTrackerIfNeeded])
+  }, [offsetMapRef, sizeCacheRef, keyIndexRef, scrollerRef, innerRef, stateMachine, onBatchFlushed])
 
   const measureItem = useCallback((key: string | number, size: number) => {
     const prevSize = sizeCacheRef.current.get(key)
@@ -154,24 +107,10 @@ export function useMeasurePipeline(options: MeasurePipelineOptions) {
     }
   }, [sizeCacheRef, flush])
 
-  /**
-   * Synchronously applies all pending measurements to the offsetMap.
-   *
-   * Called from useScrollAnchor's useLayoutEffect, which runs AFTER all
-   * VirtualItem useLayoutEffects (React fires children-before-parent).
-   * This means every newly-mounted item's real getBoundingClientRect size
-   * is already in pendingRef when the anchor restore runs — giving us
-   * accurate offsets BEFORE computing the target scrollTop, eliminating
-   * the multi-frame settle jumps entirely.
-   *
-   * Does NOT apply scrollBy compensation (the anchor restore owns scrollTop).
-   * Does NOT call onBatchFlushed (a re-render is already scheduled).
-   */
   const flushPendingSync = useCallback(() => {
     const pending = pendingRef.current
     if (pending.size === 0) return
 
-    // Cancel the RAF flush — we're handling it synchronously now.
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
@@ -187,7 +126,6 @@ export function useMeasurePipeline(options: MeasurePipelineOptions) {
       const didChange = om.setSize(index, size)
       if (didChange) sizeCacheRef.current.set(key, size)
     }
-    // onBatchFlushed intentionally skipped — caller owns the re-render cycle.
   }, [offsetMapRef, sizeCacheRef, keyIndexRef])
 
   return { measureItem, flushPendingSync }
