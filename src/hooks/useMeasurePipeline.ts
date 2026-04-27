@@ -4,6 +4,8 @@ import type { ItemSizeCache } from "../core/itemSizeCache"
 import type { KeyIndex } from "../core/keyIndex"
 import type { ScrollStateMachine } from "./useScrollStateMachine"
 
+const LOG = (...args: unknown[]) => console.log("[anchorlist:measure]", ...args)
+
 interface MeasurePipelineOptions {
   offsetMapRef: React.MutableRefObject<OffsetMap | null>
   sizeCacheRef: React.MutableRefObject<ItemSizeCache>
@@ -114,19 +116,28 @@ export function useMeasurePipeline(options: MeasurePipelineOptions) {
       }
     }
 
+    if (el && scrollDelta !== 0) {
+      const state = stateMachine.getState()
+      LOG("📏 flush scrollDelta", {
+        scrollDelta,
+        state,
+        isRestoring: stateMachine.isRestoring(),
+        scrollTop: el.scrollTop,
+        scrollHeight: el.scrollHeight,
+      })
+    }
     if (el && scrollDelta !== 0 && !stateMachine.isRestoring()) {
       if (_isMobileSafari && isScrollingRef.current) {
-        // Mobile Safari: accumulate deviation as CSS transform on the inner container.
-        // scrollBy() is silently ignored during momentum scroll on iOS.
-        // The deviation is converted to a real scrollBy() once scrolling stops.
         deviationRef.current += scrollDelta
         if (innerRef.current) {
           innerRef.current.style.transform = `translateY(${-deviationRef.current}px)`
         }
       } else {
-        // Desktop / non-Safari: scrollBy is atomic and safe during scroll events.
         el.scrollBy({ top: scrollDelta })
+        LOG("📏 scrollBy applied", { scrollDelta, newScrollTop: el.scrollTop })
       }
+    } else if (el && scrollDelta !== 0 && stateMachine.isRestoring()) {
+      LOG("📏 scrollDelta SKIPPED — state is restoring")
     }
 
     if (changed) onBatchFlushed()
@@ -143,5 +154,41 @@ export function useMeasurePipeline(options: MeasurePipelineOptions) {
     }
   }, [sizeCacheRef, flush])
 
-  return { measureItem }
+  /**
+   * Synchronously applies all pending measurements to the offsetMap.
+   *
+   * Called from useScrollAnchor's useLayoutEffect, which runs AFTER all
+   * VirtualItem useLayoutEffects (React fires children-before-parent).
+   * This means every newly-mounted item's real getBoundingClientRect size
+   * is already in pendingRef when the anchor restore runs — giving us
+   * accurate offsets BEFORE computing the target scrollTop, eliminating
+   * the multi-frame settle jumps entirely.
+   *
+   * Does NOT apply scrollBy compensation (the anchor restore owns scrollTop).
+   * Does NOT call onBatchFlushed (a re-render is already scheduled).
+   */
+  const flushPendingSync = useCallback(() => {
+    const pending = pendingRef.current
+    if (pending.size === 0) return
+
+    // Cancel the RAF flush — we're handling it synchronously now.
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    pendingRef.current = new Map()
+
+    const om = offsetMapRef.current
+    if (!om) return
+
+    for (const [key, size] of pending) {
+      const index = keyIndexRef.current.getIndex(key)
+      if (index === undefined) continue
+      const didChange = om.setSize(index, size)
+      if (didChange) sizeCacheRef.current.set(key, size)
+    }
+    // onBatchFlushed intentionally skipped — caller owns the re-render cycle.
+  }, [offsetMapRef, sizeCacheRef, keyIndexRef])
+
+  return { measureItem, flushPendingSync }
 }

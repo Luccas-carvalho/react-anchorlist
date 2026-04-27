@@ -42,6 +42,18 @@ export class ItemSizeCache {
     this.cache.clear()
   }
 
+  /**
+   * Average size of all measured items. Returns null if no items measured yet.
+   * Used to seed prepend estimates instead of the configured estimatedItemSize,
+   * which is often too large and causes large anchor-restore jumps.
+   */
+  getAverageSize(): number | null {
+    if (this.cache.size === 0) return null
+    let sum = 0
+    for (const v of this.cache.values()) sum += v
+    return sum / this.cache.size
+  }
+
   /** Re-applies all cached sizes to the OffsetMap using a key→index map. */
   applyToOffsetMap(
     offsetMap: OffsetMap,

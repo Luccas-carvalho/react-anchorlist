@@ -128,6 +128,13 @@ export interface ChatVirtualListProps<T> {
   onEndReached?: () => void | Promise<void>
   startReachedThreshold?: ReachedThreshold
   endReachedThreshold?: ReachedThreshold
+  /**
+   * Per-item estimated size. Required for pixel-perfect prepend anchoring
+   * when items have variable sizes (e.g. chat with mixed media types).
+   * Without this, the lib falls back to a single global average — which
+   * causes a small visual jump (~1px × prepended-count) on anchor restore.
+   */
+  getItemEstimate?: (item: T, index: number) => number
   /** @deprecated Prefer `scrollModifier={{ id, type: "jump-to-key", key }}` */
   scrollToMessageKey?: string | number | null
   /** @deprecated Prefer command id tracking on `scrollModifier` */
@@ -166,6 +173,7 @@ export interface UseVirtualEngineReturn<T> {
   isAtBottom: boolean
   scrollTop: number
   stateMachine: ScrollStateMachine
+  flushPendingSync: () => void
 }
 
 export interface RenderRange {

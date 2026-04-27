@@ -70,8 +70,17 @@ export class OffsetMap {
     return true
   }
 
-  prepend(count: number): void {
-    const newSizes = Array(count).fill(this.defaultSize) as number[]
+  prepend(count: number, itemSize?: number | number[]): void {
+    let newSizes: number[]
+    if (Array.isArray(itemSize)) {
+      newSizes = Array(count).fill(this.defaultSize) as number[]
+      for (let i = 0; i < Math.min(count, itemSize.length); i++) {
+        newSizes[i] = itemSize[i] ?? this.defaultSize
+      }
+    } else {
+      const sz = itemSize ?? this.defaultSize
+      newSizes = Array(count).fill(sz) as number[]
+    }
     this.sizes = [...newSizes, ...this.sizes]
     this._buildBIT()
   }

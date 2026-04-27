@@ -23,6 +23,7 @@ function ChatVirtualListInner<T>(
     onEndReached,
     startReachedThreshold = 300,
     endReachedThreshold = 300,
+    getItemEstimate,
     scrollToMessageKey,
     onScrollToMessageComplete,
     onAtBottomChange,
@@ -58,6 +59,7 @@ function ChatVirtualListInner<T>(
     onEndReached,
     startReachedThreshold,
     endReachedThreshold,
+    getItemEstimate,
     scrollToMessageKey,
     onScrollToMessageComplete,
   })

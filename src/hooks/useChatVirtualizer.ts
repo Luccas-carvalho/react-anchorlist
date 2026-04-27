@@ -16,6 +16,8 @@ import type {
   UseChatVirtualizerReturn,
 } from "../types"
 
+const LOG = (...args: unknown[]) => console.log("[anchorlist]", ...args)
+
 /**
  * Composites all virtual engine hooks into a single chat-optimized hook.
  */
@@ -33,6 +35,13 @@ export function useChatVirtualizer<T>(options: {
   onEndReached?: () => void | Promise<void>
   startReachedThreshold?: ReachedThreshold
   endReachedThreshold?: ReachedThreshold
+  /**
+   * Per-item estimated size. Use this when items have wildly different sizes
+   * (e.g. chat with text + images + videos). Returning accurate estimates here
+   * eliminates the visual flicker on prepend/anchor-restore caused by
+   * unrendered items above viewport using a single average size.
+   */
+  getItemEstimate?: (item: T, index: number) => number
   /** @deprecated Prefer `scrollModifier` with `type: "jump-to-key"` */
   scrollToMessageKey?: string | number | null
   /** @deprecated Prefer command id tracking on `scrollModifier` */
@@ -52,6 +61,7 @@ export function useChatVirtualizer<T>(options: {
     onEndReached,
     startReachedThreshold = 300,
     endReachedThreshold = 300,
+    getItemEstimate,
     scrollToMessageKey,
     onScrollToMessageComplete,
   } = options
@@ -62,6 +72,7 @@ export function useChatVirtualizer<T>(options: {
     estimatedItemSize,
     overscan,
     initialAlignment,
+    getItemEstimate,
   })
 
   const isAtBottom = useAtBottom(engine.scrollerRef, {
@@ -82,6 +93,7 @@ export function useChatVirtualizer<T>(options: {
     captureAnchorSnapshot: engine.captureAnchorSnapshot,
     resolveAnchorTop: engine.resolveAnchorTop,
     stateMachine: engine.stateMachine,
+    flushPendingMeasures: engine.flushPendingSync,
     onRestored: onAnchorRestored,
   })
 
@@ -161,18 +173,36 @@ export function useChatVirtualizer<T>(options: {
   const endTriggeredRef = useRef(false)
 
   useEffect(() => {
+    LOG("🔄 keys/length changed — resetting triggered locks", {
+      itemsLength: items.length,
+      firstKey,
+      lastKey,
+      startInFlight: startInFlight.current,
+      endInFlight: endInFlight.current,
+    })
     startTriggeredRef.current = false
     endTriggeredRef.current = false
   }, [items.length, firstKey, lastKey])
 
   const triggerStartReached = useCallback(() => {
     const callback = onStartReachedRef.current
-    if (!callback || startInFlight.current) return
+    LOG("🚀 triggerStartReached called", {
+      hasCallback: !!callback,
+      startInFlight: startInFlight.current,
+      startTriggered: startTriggeredRef.current,
+    })
+    if (!callback || startInFlight.current) {
+      LOG("⛔ triggerStartReached SKIPPED (no callback or in-flight)")
+      return
+    }
 
     // Automatic anchor capture before loading older pages.
+    LOG("⚓ prepareAnchor() called from triggerStartReached")
     prepareAnchor()
     startInFlight.current = true
+    LOG("✈️ startInFlight = true")
     Promise.resolve(callback()).finally(() => {
+      LOG("🏁 startInFlight = false (callback resolved)")
       startInFlight.current = false
     })
   }, [prepareAnchor])
@@ -199,12 +229,23 @@ export function useChatVirtualizer<T>(options: {
       const observer = new IntersectionObserver(
         ([entry]) => {
           if (!entry) return
+          LOG("👁️ IntersectionObserver (start)", {
+            isIntersecting: entry.isIntersecting,
+            startTriggered: startTriggeredRef.current,
+            startInFlight: startInFlight.current,
+            intersectionRatio: entry.intersectionRatio,
+          })
           if (!entry.isIntersecting) {
             startTriggeredRef.current = false
+            LOG("👁️ sentinel left viewport — startTriggered = false")
             return
           }
-          if (startTriggeredRef.current || startInFlight.current) return
+          if (startTriggeredRef.current || startInFlight.current) {
+            LOG("👁️ sentinel intersecting but SKIPPED (already triggered or in-flight)")
+            return
+          }
           startTriggeredRef.current = true
+          LOG("👁️ sentinel intersecting — calling triggerStartReached")
           triggerStartReached()
         },
         {

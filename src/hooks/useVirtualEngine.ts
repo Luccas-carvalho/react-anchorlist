@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { flushSync } from "react-dom"
+
+const LOG = (...args: unknown[]) => console.log("[anchorlist:engine]", ...args)
 import { OffsetMap } from "../core/offsetMap"
 import { ItemSizeCache } from "../core/itemSizeCache"
 import { KeyIndex } from "../core/keyIndex"
@@ -17,8 +19,9 @@ export function useVirtualEngine<T>(options: {
   estimatedItemSize: number
   overscan: number
   initialAlignment: "top" | "bottom"
+  getItemEstimate?: (item: T, index: number) => number
 }): UseVirtualEngineReturn<T> {
-  const { items, getKey, estimatedItemSize, overscan, initialAlignment } = options
+  const { items, getKey, estimatedItemSize, overscan, initialAlignment, getItemEstimate } = options
 
   const scrollerRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
@@ -60,6 +63,17 @@ export function useVirtualEngine<T>(options: {
     const om = offsetMapRef.current!
     const mutation = detectMutation(prevKeys, newKeys)
 
+    LOG("🔑 mutation detected", {
+      type: mutation.type,
+      count: (mutation as { count?: number }).count,
+      prevLen: prevKeys.length,
+      newLen: newKeys.length,
+      prevFirst: prevKeys[0],
+      newFirst: newKeys[0],
+      prevLast: prevKeys[prevKeys.length - 1],
+      newLast: newKeys[newKeys.length - 1],
+    })
+
     switch (mutation.type) {
       case "initial":
         om.resize(newKeys.length)
@@ -67,9 +81,23 @@ export function useVirtualEngine<T>(options: {
       case "cleared":
         om.resize(0)
         break
-      case "prepend":
-        om.prepend(mutation.count)
+      case "prepend": {
+        // Per-item estimates: most accurate when caller knows item types.
+        // Falls back to average of measured items, then estimatedItemSize.
+        if (getItemEstimate) {
+          const perItemSizes: number[] = []
+          for (let i = 0; i < mutation.count; i++) {
+            perItemSizes.push(getItemEstimate(items[i] as T, i))
+          }
+          LOG("📐 prepend per-item estimates", { count: perItemSizes.length, sample: perItemSizes.slice(0, 5) })
+          om.prepend(mutation.count, perItemSizes)
+        } else {
+          const avgSize = sizeCacheRef.current.getAverageSize() ?? estimatedItemSize
+          LOG("📐 prepend avgSize", { avgSize, estimated: estimatedItemSize })
+          om.prepend(mutation.count, Math.round(avgSize))
+        }
         break
+      }
       case "append":
         om.append(mutation.count)
         break
@@ -85,7 +113,7 @@ export function useVirtualEngine<T>(options: {
   }
 
   // ── Measure pipeline ────────────────────────────────────────────────────
-  const { measureItem } = useMeasurePipeline({
+  const { measureItem, flushPendingSync } = useMeasurePipeline({
     offsetMapRef,
     sizeCacheRef,
     keyIndexRef,
@@ -331,5 +359,6 @@ export function useVirtualEngine<T>(options: {
     isAtBottom: distFromBottom <= 1,
     scrollTop: currentScrollTop,
     stateMachine,
+    flushPendingSync,
   }
 }
