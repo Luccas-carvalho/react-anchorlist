@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useLayoutEffect, useRef } from "react"
 import type { VirtualItem } from "../types"
 
 interface VirtualItemProps {
@@ -10,10 +10,9 @@ interface VirtualItemProps {
 /**
  * Wrapper for a single virtualized item.
  * - Positioned with CSS transform (GPU compositor — no layout reflow)
- * - ResizeObserver measures real height and reports back to the engine
- * - NO minHeight — items are absolutely positioned so their height
- *   doesn't affect siblings. This ensures a single-pass measurement
- *   (no two-step estimate→real that causes visible blinks).
+ * - useLayoutEffect: synchronous measure before paint → eliminates 1-frame flash of estimated sizes
+ * - ResizeObserver: continuous measurement using borderBoxSize (includes padding, more accurate)
+ * - NO minHeight — absolutely positioned items don't affect siblings
  */
 export function VirtualItemComponent({
   virtualItem,
@@ -22,13 +21,26 @@ export function VirtualItemComponent({
 }: VirtualItemProps) {
   const ref = useRef<HTMLDivElement>(null)
 
+  // Synchronous measurement before paint. Eliminates the 1-frame flash where
+  // estimated sizes are used before ResizeObserver fires asynchronously.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const size = Math.round(el.getBoundingClientRect().height)
+    if (size > 0) measureItem(virtualItem.key, size)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const observer = new ResizeObserver(([entry]) => {
-      if (entry) {
-        measureItem(virtualItem.key, entry.contentRect.height)
-      }
+      if (!entry) return
+      // borderBoxSize includes padding — more accurate than contentRect.
+      // Falls back to contentRect for older browsers.
+      const size =
+        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
+      measureItem(virtualItem.key, Math.round(size))
     })
     observer.observe(el)
     return () => observer.disconnect()

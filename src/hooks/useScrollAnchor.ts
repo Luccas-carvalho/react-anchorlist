@@ -18,10 +18,14 @@ interface UseScrollAnchorOptions {
 /**
  * Keeps viewport anchored when items are prepended.
  *
- * v1 change: replaces the 3-pass + setTimeout(90ms) restore with a single
- * synchronous restore guarded by the scroll state machine. The state machine
- * blocks ResizeObserver compensation during the restore window, eliminating
- * the race condition between measurement and anchor.
+ * v2: replaces the single-RAF follow-up with a frame-settling loop (up to
+ * MAX_SETTLE_FRAMES) that keeps re-applying the anchor target until the
+ * computed target is stable. This handles large prepends (30+ items) where
+ * ResizeObserver measurements continue to arrive for multiple frames after
+ * the initial restore, shifting the correct anchor position.
+ *
+ * The state machine blocks measurement compensation during the restore window,
+ * so the loop converges without fighting the pipeline.
  */
 export function useScrollAnchor(options: UseScrollAnchorOptions): { prepareAnchor: () => void } {
   const {
@@ -59,37 +63,60 @@ export function useScrollAnchor(options: UseScrollAnchorOptions): { prepareAncho
 
     anchorPending.current = false
 
-    // Block measurement compensation while restoring
-    stateMachine.beginRestore(150)
-
-    const target = resolveAnchorTargetFromSnapshot({
-      snapshot,
-      currentScrollHeight: el.scrollHeight,
-      resolveAnchorTop,
-    })
-
-    if (Number.isFinite(target) && Math.abs(el.scrollTop - target) > 1) {
-      el.scrollTop = target
-    }
-
-    // One follow-up frame — items may have measured during the layout pass
-    // and shifted offsets slightly. One extra frame is enough; no timeout needed.
-    const rafId = requestAnimationFrame(() => {
-      const nextEl = scrollerRef.current
-      if (!nextEl) { stateMachine.endRestore(); return }
-
-      const nextTarget = resolveAnchorTargetFromSnapshot({
+    const getTarget = () =>
+      resolveAnchorTargetFromSnapshot({
         snapshot,
-        currentScrollHeight: nextEl.scrollHeight,
+        currentScrollHeight: el.scrollHeight,
         resolveAnchorTop,
       })
-      if (Number.isFinite(nextTarget) && Math.abs(nextEl.scrollTop - nextTarget) > 1) {
-        nextEl.scrollTop = nextTarget
+
+    // Initial synchronous restore
+    const initialTarget = getTarget()
+    if (Number.isFinite(initialTarget) && Math.abs(el.scrollTop - initialTarget) > 1) {
+      el.scrollTop = initialTarget
+    }
+
+    // Block measurement compensation for the duration of settling.
+    // Window is extended per frame while target is still moving; hard cap at 800ms.
+    const MAX_SETTLE_FRAMES = 8
+    const MAX_SETTLE_MS = 800
+    const STABLE_THRESHOLD_PX = 1
+    const startedAt = performance.now()
+    let frames = 0
+    let rafId: number
+
+    stateMachine.beginRestore(MAX_SETTLE_MS)
+
+    const settle = () => {
+      const nextEl = scrollerRef.current
+      if (!nextEl) {
+        stateMachine.endRestore()
+        onRestored?.()
+        return
       }
 
-      stateMachine.endRestore()
-      onRestored?.()
-    })
+      const target = getTarget()
+      const diff = Math.abs(nextEl.scrollTop - target)
+      const elapsed = performance.now() - startedAt
+      frames++
+
+      if (diff > STABLE_THRESHOLD_PX) {
+        // Target still moving — re-apply and continue
+        nextEl.scrollTop = target
+      }
+
+      if (frames >= MAX_SETTLE_FRAMES || elapsed >= MAX_SETTLE_MS) {
+        // Safety valve: stop regardless of convergence
+        stateMachine.endRestore()
+        onRestored?.()
+        return
+      }
+
+      // Continue settling next frame
+      rafId = requestAnimationFrame(settle)
+    }
+
+    rafId = requestAnimationFrame(settle)
 
     return () => {
       cancelAnimationFrame(rafId)

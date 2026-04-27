@@ -34,6 +34,8 @@ function ChatVirtualListInner<T>(
   const {
     scrollerRef,
     innerRef,
+    startSentinelRef,
+    endSentinelRef,
     virtualItems,
     totalSize,
     measureItem,
@@ -101,6 +103,12 @@ function ChatVirtualListInner<T>(
         ...style,
       }}
     >
+      <div
+        ref={startSentinelRef}
+        aria-hidden="true"
+        style={{ position: "relative", width: "100%", height: 1, pointerEvents: "none" }}
+      />
+
       {/* Header inside scroller so it scrolls with content */}
       {Header && <Header />}
 
@@ -119,6 +127,12 @@ function ChatVirtualListInner<T>(
 
       {/* Footer inside scroller */}
       {Footer && <Footer />}
+
+      <div
+        ref={endSentinelRef}
+        aria-hidden="true"
+        style={{ position: "relative", width: "100%", height: 1, pointerEvents: "none" }}
+      />
     </div>
   )
 }

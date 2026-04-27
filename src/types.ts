@@ -31,6 +31,8 @@ export interface AtBottomHysteresis {
   leave: number
 }
 
+export type ReachedThreshold = number | string
+
 export type ChatScrollModifier =
   | { id: string | number; type: "prepend" }
   | {
@@ -124,8 +126,8 @@ export interface ChatVirtualListProps<T> {
   scrollModifier?: ChatScrollModifier | null
   onStartReached?: () => void | Promise<void>
   onEndReached?: () => void | Promise<void>
-  startReachedThreshold?: number
-  endReachedThreshold?: number
+  startReachedThreshold?: ReachedThreshold
+  endReachedThreshold?: ReachedThreshold
   /** @deprecated Prefer `scrollModifier={{ id, type: "jump-to-key", key }}` */
   scrollToMessageKey?: string | number | null
   /** @deprecated Prefer command id tracking on `scrollModifier` */
@@ -144,7 +146,7 @@ export interface VirtualListProps<T> {
   estimatedItemSize?: number
   overscan?: number
   onEndReached?: () => void | Promise<void>
-  endReachedThreshold?: number
+  endReachedThreshold?: ReachedThreshold
   components?: VirtualListComponents<T>
   className?: string
   style?: React.CSSProperties
@@ -174,6 +176,8 @@ export interface RenderRange {
 export interface UseChatVirtualizerReturn<T> {
   scrollerRef: React.RefObject<HTMLDivElement>
   innerRef: React.RefObject<HTMLDivElement>
+  startSentinelRef: React.RefObject<HTMLDivElement>
+  endSentinelRef: React.RefObject<HTMLDivElement>
   virtualItems: VirtualItem<T>[]
   totalSize: number
   measureItem: (key: string | number, size: number) => void

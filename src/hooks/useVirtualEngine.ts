@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { flushSync } from "react-dom"
 import { OffsetMap } from "../core/offsetMap"
 import { ItemSizeCache } from "../core/itemSizeCache"
 import { KeyIndex } from "../core/keyIndex"
@@ -34,6 +35,9 @@ export function useVirtualEngine<T>(options: {
 
   const settlingRef = useRef(false)
   const settlingRafRef = useRef<number | null>(null)
+
+  // Track the last rendered virtual range to skip renders when range is unchanged.
+  const prevRangeRef = useRef<{ start: number; end: number } | null>(null)
 
   const [, setTick] = useState(0)
   const forceRender = useCallback(() => setTick((t) => t + 1), [])
@@ -76,6 +80,8 @@ export function useVirtualEngine<T>(options: {
     keyIndexRef.current.rebuild(newKeys)
     sizeCacheRef.current.applyToOffsetMap(om, new Map(newKeys.map((k, i) => [k, i])))
     prevKeysRef.current = newKeys
+    // Invalidate range cache so next render recomputes
+    prevRangeRef.current = null
   }
 
   // ── Measure pipeline ────────────────────────────────────────────────────
@@ -89,18 +95,42 @@ export function useVirtualEngine<T>(options: {
     onBatchFlushed: forceRender,
   })
 
-  // ── Scroll handler — rAF throttled ─────────────────────────────────────
+  // ── Scroll handler — rAF throttled + flushSync ─────────────────────────
   useEffect(() => {
     const el = scrollerRef.current
     if (!el) return
 
     const handler = () => {
+      // Update scrollTop immediately (outside RAF) so any in-flight render
+      // or measurement can read the freshest position without waiting a frame.
+      scrollTopRef.current = el.scrollTop
+
       if (rafIdRef.current !== null) return
       rafIdRef.current = requestAnimationFrame(() => {
         rafIdRef.current = null
-        scrollTopRef.current = el.scrollTop
-        containerHeightRef.current = el.clientHeight
-        forceRender()
+
+        const nextScrollTop = el.scrollTop
+        const nextHeight = el.clientHeight
+
+        // Skip render if the visible range hasn't changed.
+        // Avoids flushSync overhead for micro-scrolls within item boundaries.
+        const om = offsetMapRef.current
+        if (om && om.count > 0) {
+          const innerOffset = innerRef.current?.offsetTop ?? 0
+          const adjustedTop = Math.max(0, nextScrollTop - innerOffset)
+          const newStart = om.findIndexAtOffset(adjustedTop)
+          const newEnd = om.findIndexAtOffset(adjustedTop + nextHeight)
+          const prev = prevRangeRef.current
+          if (prev && prev.start === newStart && prev.end === newEnd) return
+          prevRangeRef.current = { start: newStart, end: newEnd }
+        }
+
+        scrollTopRef.current = nextScrollTop
+        containerHeightRef.current = nextHeight
+
+        // flushSync forces React to render synchronously within this frame,
+        // preventing the 1-frame visual lag seen with async batched updates.
+        flushSync(forceRender)
       })
     }
 
@@ -124,6 +154,8 @@ export function useVirtualEngine<T>(options: {
     const observer = new ResizeObserver(([entry]) => {
       if (!entry) return
       containerHeightRef.current = entry.contentRect.height
+      // Invalidate range cache on resize so we recompute
+      prevRangeRef.current = null
       forceRender()
     })
     observer.observe(el)
@@ -188,6 +220,7 @@ export function useVirtualEngine<T>(options: {
     if (items.length !== 0) return
     initialScrollDone.current = false
     settlingRef.current = false
+    prevRangeRef.current = null
     stateMachine.transition("idle")
     if (settlingRafRef.current !== null) {
       cancelAnimationFrame(settlingRafRef.current)

@@ -3,9 +3,15 @@ import { useVirtualEngine } from "./useVirtualEngine"
 import { useScrollAnchor } from "./useScrollAnchor"
 import { useAtBottom } from "./useAtBottom"
 import { useFollowOutput } from "./useFollowOutput"
+import {
+  buildReachedRootMargin,
+  getThresholdPixels,
+  parseReachedThreshold,
+} from "../core/reachedThreshold"
 import type {
   AtBottomHysteresis,
   ChatScrollModifier,
+  ReachedThreshold,
   ScrollToIndexOpts,
   UseChatVirtualizerReturn,
 } from "../types"
@@ -25,8 +31,8 @@ export function useChatVirtualizer<T>(options: {
   scrollModifier?: ChatScrollModifier | null
   onStartReached?: () => void | Promise<void>
   onEndReached?: () => void | Promise<void>
-  startReachedThreshold?: number
-  endReachedThreshold?: number
+  startReachedThreshold?: ReachedThreshold
+  endReachedThreshold?: ReachedThreshold
   /** @deprecated Prefer `scrollModifier` with `type: "jump-to-key"` */
   scrollToMessageKey?: string | number | null
   /** @deprecated Prefer command id tracking on `scrollModifier` */
@@ -83,6 +89,8 @@ export function useChatVirtualizer<T>(options: {
   const lastKey = items.length > 0
     ? getKey(items[items.length - 1] as T, items.length - 1)
     : null
+  const startSentinelRef = useRef<HTMLDivElement>(null)
+  const endSentinelRef = useRef<HTMLDivElement>(null)
 
   useFollowOutput({
     itemCount: items.length,
@@ -141,82 +149,144 @@ export function useChatVirtualizer<T>(options: {
 
   // Stable refs so scroll effects don't re-run when callback identity changes.
   const onStartReachedRef = useRef(onStartReached)
-  useEffect(() => { onStartReachedRef.current = onStartReached })
+  useEffect(() => { onStartReachedRef.current = onStartReached }, [onStartReached])
   const onEndReachedRef = useRef(onEndReached)
-  useEffect(() => { onEndReachedRef.current = onEndReached })
+  useEffect(() => { onEndReachedRef.current = onEndReached }, [onEndReached])
 
-  // startReached: fire when close to top, then disarm until user scrolls
-  // past the rearm zone. Prevents cascading fires when newly-prepended
-  // items leave scrollTop inside the threshold band.
+  // Stable trigger locks prevent rapid duplicate calls while edge sentinels
+  // remain visible or while an async callback is still in flight.
   const startInFlight = useRef(false)
-  const startArmed = useRef(initialAlignment === "top")
+  const startTriggeredRef = useRef(false)
+  const endInFlight = useRef(false)
+  const endTriggeredRef = useRef(false)
+
+  useEffect(() => {
+    startTriggeredRef.current = false
+    endTriggeredRef.current = false
+  }, [items.length, firstKey, lastKey])
+
+  const triggerStartReached = useCallback(() => {
+    const callback = onStartReachedRef.current
+    if (!callback || startInFlight.current) return
+
+    // Automatic anchor capture before loading older pages.
+    prepareAnchor()
+    startInFlight.current = true
+    Promise.resolve(callback()).finally(() => {
+      startInFlight.current = false
+    })
+  }, [prepareAnchor])
+
+  const triggerEndReached = useCallback(() => {
+    const callback = onEndReachedRef.current
+    if (!callback || endInFlight.current) return
+
+    endInFlight.current = true
+    Promise.resolve(callback()).finally(() => {
+      endInFlight.current = false
+    })
+  }, [])
+
+  // startReached: prefer IntersectionObserver sentinel, fallback to scroll math.
   useEffect(() => {
     const el = engine.scrollerRef.current
-    if (!el || !onStartReachedRef.current) return
+    const sentinel = startSentinelRef.current
+    if (!el || !sentinel || !onStartReachedRef.current) return
 
-    const rearmZone = startReachedThreshold * 2
+    const threshold = parseReachedThreshold(startReachedThreshold, 300)
+
+    if (typeof IntersectionObserver !== "undefined") {
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          if (!entry) return
+          if (!entry.isIntersecting) {
+            startTriggeredRef.current = false
+            return
+          }
+          if (startTriggeredRef.current || startInFlight.current) return
+          startTriggeredRef.current = true
+          triggerStartReached()
+        },
+        {
+          root: el,
+          rootMargin: buildReachedRootMargin(threshold, "start"),
+          threshold: 0,
+        }
+      )
+
+      observer.observe(sentinel)
+      return () => observer.disconnect()
+    }
 
     const handler = () => {
       if (!onStartReachedRef.current) return
-      const top = el.scrollTop
+      const thresholdPx = getThresholdPixels(threshold, el.clientHeight)
+      const nearStart = el.scrollTop <= thresholdPx
 
-      if (!startArmed.current) {
-        const conversationTooShort = el.scrollHeight <= el.clientHeight + startReachedThreshold
-        if (conversationTooShort || top > rearmZone) {
-          startArmed.current = true
-        }
+      if (!nearStart) {
+        startTriggeredRef.current = false
+        return
       }
-
-      if (!startArmed.current) return
-
-      if (top <= startReachedThreshold && !startInFlight.current) {
-        startInFlight.current = true
-        startArmed.current = false
-        Promise.resolve(onStartReachedRef.current()).finally(() => {
-          startInFlight.current = false
-        })
-      }
+      if (startTriggeredRef.current || startInFlight.current) return
+      startTriggeredRef.current = true
+      triggerStartReached()
     }
 
     el.addEventListener("scroll", handler, { passive: true })
     handler()
     return () => el.removeEventListener("scroll", handler)
-  }, [engine.scrollerRef, startReachedThreshold, initialAlignment])
+  }, [engine.scrollerRef, onStartReached, startReachedThreshold, triggerStartReached])
 
-  // endReached: same rearm pattern at the bottom edge.
-  const endInFlight = useRef(false)
-  const endArmed = useRef(initialAlignment === "bottom")
+  // endReached: same strategy as startReached, but observing the bottom edge.
   useEffect(() => {
     const el = engine.scrollerRef.current
-    if (!el || !onEndReachedRef.current) return
+    const sentinel = endSentinelRef.current
+    if (!el || !sentinel || !onEndReachedRef.current) return
 
-    const rearmZone = endReachedThreshold * 2
+    const threshold = parseReachedThreshold(endReachedThreshold, 300)
+
+    if (typeof IntersectionObserver !== "undefined") {
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          if (!entry) return
+          if (!entry.isIntersecting) {
+            endTriggeredRef.current = false
+            return
+          }
+          if (endTriggeredRef.current || endInFlight.current) return
+          endTriggeredRef.current = true
+          triggerEndReached()
+        },
+        {
+          root: el,
+          rootMargin: buildReachedRootMargin(threshold, "end"),
+          threshold: 0,
+        }
+      )
+
+      observer.observe(sentinel)
+      return () => observer.disconnect()
+    }
 
     const handler = () => {
       if (!onEndReachedRef.current) return
+      const thresholdPx = getThresholdPixels(threshold, el.clientHeight)
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+      const nearEnd = dist <= thresholdPx
 
-      if (!endArmed.current) {
-        const conversationTooShort = el.scrollHeight <= el.clientHeight + endReachedThreshold
-        if (conversationTooShort || dist > rearmZone) {
-          endArmed.current = true
-        }
+      if (!nearEnd) {
+        endTriggeredRef.current = false
+        return
       }
-
-      if (!endArmed.current) return
-
-      if (dist <= endReachedThreshold && !endInFlight.current) {
-        endInFlight.current = true
-        endArmed.current = false
-        Promise.resolve(onEndReachedRef.current()).finally(() => {
-          endInFlight.current = false
-        })
-      }
+      if (endTriggeredRef.current || endInFlight.current) return
+      endTriggeredRef.current = true
+      triggerEndReached()
     }
+
     el.addEventListener("scroll", handler, { passive: true })
     handler()
     return () => el.removeEventListener("scroll", handler)
-  }, [engine.scrollerRef, endReachedThreshold, initialAlignment])
+  }, [engine.scrollerRef, onEndReached, endReachedThreshold, triggerEndReached])
 
   // Deprecated imperative scroll-to-message-key support.
   const scrolledKeyRef = useRef<string | number | null>(null)
@@ -233,6 +303,8 @@ export function useChatVirtualizer<T>(options: {
   return {
     scrollerRef: engine.scrollerRef,
     innerRef: engine.innerRef,
+    startSentinelRef,
+    endSentinelRef,
     virtualItems: engine.virtualItems,
     totalSize: engine.totalSize,
     measureItem: engine.measureItem,

@@ -77,8 +77,30 @@ export class OffsetMap {
   }
 
   append(count: number): void {
-    for (let i = 0; i < count; i++) this.sizes.push(this.defaultSize)
-    this._buildBIT()
+    for (let k = 0; k < count; k++) {
+      // Compute bit[m]'s inherited range sum BEFORE growing the arrays,
+      // so _bitQuery still reflects the current (pre-append) state.
+      const prevN = this.sizes.length   // = m - 1 (0-indexed)
+      const m = prevN + 1               // 1-indexed position of new item
+      const lo = m - (m & -m)           // start-1 of bit[m]'s covered range
+      // Sum of existing elements that fall in bit[m]'s range [lo+1 .. m-1]
+      const rangeSum = this._bitQuery(prevN) - this._bitQuery(lo)
+
+      // Grow arrays
+      this.sizes.push(this.defaultSize)
+      this.bit.push(0)
+
+      // Set bit[m] = inherited range sum + new item size
+      this.bit[m] = rangeSum + this.defaultSize
+
+      // Propagate new item's contribution to parent BIT nodes
+      const n = this.sizes.length
+      let p = m + (m & -m)
+      while (p <= n) {
+        this.bit[p] = (this.bit[p] ?? 0) + this.defaultSize
+        p += p & -p
+      }
+    }
   }
 
   resize(newCount: number): void {

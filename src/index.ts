@@ -9,6 +9,7 @@ export type {
   VirtualItem,
   ScrollToIndexOpts,
   ChatScrollModifier,
+  ReachedThreshold,
   AtBottomHysteresis,
   VirtualListComponents,
   UsePaginationOptions,

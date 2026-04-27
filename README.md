@@ -48,9 +48,8 @@ const [scrollModifier, setScrollModifier] = useState<ChatScrollModifier | null>(
   scrollModifier={scrollModifier}
   followOutput="auto"
   onStartReached={async () => {
-    // 1) tell the list to preserve anchor
-    setScrollModifier({ id: `prepend-${Date.now()}`, type: "prepend" })
-    // 2) prepend older messages in your state
+    // prepend older messages in your state
+    // anchor is captured automatically before this callback runs
     await loadOlderMessages()
   }}
   onAtBottomChange={setIsAtBottom}
@@ -94,7 +93,7 @@ import {
 - `scrollModifier` (`ChatScrollModifier | null`)
 - `followOutput` (`"auto" | "smooth" | false`, default: `"auto"`)
 - `onStartReached`, `onEndReached`
-- `startReachedThreshold` and `endReachedThreshold` (default: `300`)
+- `startReachedThreshold` and `endReachedThreshold` (default: `300`, accepts `number`, `"120px"` or `"30%"`)
 - `onAtBottomChange`
 - `estimatedItemSize` (default: `80`)
 - `overscan` (default: `20`)
@@ -159,6 +158,7 @@ useEffect(() => {
 - Start with a realistic `estimatedItemSize`.
 - Keep `overscan` low unless you need smoother very fast scrolling.
 - Prefer `scrollModifier` over deprecated APIs (`prepareAnchor`, `scrollToMessageKey`).
+- For `onStartReached`, you no longer need manual anchor prep; it is automatic.
 
 ## Internals (simple)
 
@@ -200,7 +200,7 @@ Requirements:
 1) Use `ChatVirtualList` for chat-like UX (prepend older items at top).
 2) Use stable `computeItemKey`.
 3) Use `scrollModifier` commands correctly:
-   - before loading older items: `{ id: uniqueId, type: "prepend" }`
+   - use `{ id: uniqueId, type: "prepend" }` for manual prepend flows (if not using `onStartReached`)
    - when appending new realtime items: use append/items-change behavior when appropriate
    - use `jump-to-key` for "scroll to message"
 4) Keep `followOutput="auto"` and expose `onAtBottomChange`.
