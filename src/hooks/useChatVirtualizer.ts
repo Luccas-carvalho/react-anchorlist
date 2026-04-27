@@ -88,6 +88,21 @@ export function useChatVirtualizer<T>(options: {
     hysteresis: atBottomHysteresis ?? { enter: 80, leave: 160 },
   })
 
+  // Imperative: pre-mede items (sem commitar ao data array) usando o hidden
+  // measure container. Sizes resultantes vão pro sizeCache via measureItem.
+  // Quando o caller depois prepender estes items ao data, applyToOffsetMap
+  // recolhe as medições reais — anchor restore fica pixel-perfect sem flick.
+  const prefetchMeasure = useCallback(
+    async (items: Array<{ key: string | number; data: T; index: number }>) => {
+      if (items.length === 0) return
+      const sizes = await measureBatch.measure(items)
+      for (const [key, size] of sizes) {
+        if (size > 0) engine.measureItem(key, size)
+      }
+    },
+    [measureBatch, engine]
+  )
+
   // Force a synchronous re-render after anchor restoration so that
   // virtualItems are recomputed with corrected scrollTop before paint.
   // Also releases the post-prepend force-render expansion so the next
@@ -336,6 +351,7 @@ export function useChatVirtualizer<T>(options: {
     scrollToKey,
     isAtBottom,
     prepareAnchor,
+    prefetchMeasure,
     MeasureBatchRenderer: measureBatch.Renderer,
   }
 }

@@ -46,6 +46,7 @@ function ChatVirtualListInner<T>(
     scrollToKey,
     isAtBottom,
     prepareAnchor,
+    prefetchMeasure,
     MeasureBatchRenderer,
   } = useChatVirtualizer({
     items: data,
@@ -85,8 +86,9 @@ function ChatVirtualListInner<T>(
       getScrollTop: () => scrollerRef.current?.scrollTop ?? 0,
       isAtBottom: () => isAtBottom,
       prepareAnchor,
+      prefetchMeasure: prefetchMeasure as ChatVirtualListHandle["prefetchMeasure"],
     }),
-    [scrollToBottom, scrollToIndex, scrollToKey, scrollerRef, isAtBottom, prepareAnchor]
+    [scrollToBottom, scrollToIndex, scrollToKey, scrollerRef, isAtBottom, prepareAnchor, prefetchMeasure]
   )
 
   const { Header, Footer, EmptyPlaceholder } = components

@@ -111,6 +111,14 @@ export interface ChatVirtualListHandle {
   isAtBottom: () => boolean
   /** @deprecated Use `scrollModifier={{ id, type: "prepend" }}` */
   prepareAnchor: () => void
+  /**
+   * Pre-mede items off-screen e popula sizeCache. Use para próxima página
+   * antes do usuário scrollar — quando ela for prependada, anchor restore
+   * usa medições reais (pixel-perfect, zero flick).
+   */
+  prefetchMeasure: (
+    items: Array<{ key: string | number; data: unknown; index: number }>
+  ) => Promise<void>
 }
 
 export interface ChatVirtualListProps<T> {
@@ -205,6 +213,16 @@ export interface UseChatVirtualizerReturn<T> {
   isAtBottom: boolean
   /** @deprecated Use `scrollModifier={{ id, type: "prepend" }}` */
   prepareAnchor: () => void
+  /**
+   * Imperative pre-measure: renders items in a hidden container, measures via
+   * getBoundingClientRect, and stores sizes in the internal cache. Use to
+   * "warm up" sizes for items that will later be prepended via the data prop —
+   * subsequent prepend will use real measurements (pixel-perfect anchor restore)
+   * without ever growing the visible scrollHeight before the user consumes them.
+   */
+  prefetchMeasure: (
+    items: Array<{ key: string | number; data: T; index: number }>
+  ) => Promise<void>
   /**
    * Component that mounts pending pre-measure items in a hidden container.
    * Caller MUST render this somewhere inside (or near) the scroll container

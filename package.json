@@ -1,6 +1,6 @@
 {
   "name": "react-anchorlist",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "High-performance chat virtualizer for React — no flicker, no hacks",
   "keywords": [
     "react",
