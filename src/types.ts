@@ -135,6 +135,14 @@ export interface ChatVirtualListProps<T> {
    * causes a small visual jump (~1px × prepended-count) on anchor restore.
    */
   getItemEstimate?: (item: T, index: number) => number
+  /**
+   * Pre-measure strategy.
+   * - "lazy" (default): only measures items that enter the render window naturally.
+   * - "aggressive": measures unmeasured items in a hidden container during idle frames.
+   *   Eliminates flick caused by estimate error in items the user hasn't scrolled
+   *   through yet — required for pixel-perfect prepend with large data arrays.
+   */
+  preMeasureMode?: "lazy" | "aggressive"
   /** @deprecated Prefer `scrollModifier={{ id, type: "jump-to-key", key }}` */
   scrollToMessageKey?: string | number | null
   /** @deprecated Prefer command id tracking on `scrollModifier` */
@@ -197,4 +205,13 @@ export interface UseChatVirtualizerReturn<T> {
   isAtBottom: boolean
   /** @deprecated Use `scrollModifier={{ id, type: "prepend" }}` */
   prepareAnchor: () => void
+  /**
+   * Component that mounts pending pre-measure items in a hidden container.
+   * Caller MUST render this somewhere inside (or near) the scroll container
+   * for aggressive pre-measure to work. Renders nothing when no items pending.
+   */
+  MeasureBatchRenderer: React.FC<{
+    itemContent: (index: number, data: T) => React.ReactNode
+    containerWidth: number | string
+  }>
 }

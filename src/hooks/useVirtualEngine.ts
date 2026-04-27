@@ -10,7 +10,23 @@ import { calcRenderRange } from "../core/rangeCalc"
 import { useScrollToIndex } from "./useScrollToIndex"
 import { useScrollStateMachine } from "./useScrollStateMachine"
 import { useMeasurePipeline } from "./useMeasurePipeline"
+import type { MeasureBatchController } from "../core/measureBatch"
 import type { AnchorSnapshot, UseVirtualEngineReturn, VirtualItem } from "../types"
+
+// Schedules a callback for an idle browser frame. Falls back to setTimeout(16)
+// in browsers without requestIdleCallback (Safari < 17). 1s timeout caps
+// waiting under load.
+function scheduleIdle(cb: () => void): void {
+  if (typeof window === "undefined") return
+  const w = window as Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+  }
+  if (typeof w.requestIdleCallback === "function") {
+    w.requestIdleCallback(cb, { timeout: 1000 })
+  } else {
+    setTimeout(cb, 16)
+  }
+}
 
 export function useVirtualEngine<T>(options: {
   items: T[]
@@ -19,8 +35,19 @@ export function useVirtualEngine<T>(options: {
   overscan: number
   initialAlignment: "top" | "bottom"
   getItemEstimate?: (item: T, index: number) => number
+  measureBatch?: MeasureBatchController<T>
+  preMeasureMode?: "lazy" | "aggressive"
 }): UseVirtualEngineReturn<T> {
-  const { items, getKey, estimatedItemSize, overscan, initialAlignment, getItemEstimate } = options
+  const {
+    items,
+    getKey,
+    estimatedItemSize,
+    overscan,
+    initialAlignment,
+    getItemEstimate,
+    measureBatch,
+    preMeasureMode = "lazy",
+  } = options
 
   const scrollerRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
@@ -122,6 +149,59 @@ export function useVirtualEngine<T>(options: {
       forceRender()
     }
   }, [forceRender])
+
+  // Aggressive pre-measure: schedules unmeasured items to be rendered in a
+  // hidden container during idle frames, so their real heights populate the
+  // sizeCache + offsetMap BEFORE the user scrolls past them. Eliminates the
+  // residual flick caused by estimate error in items the user has not yet
+  // entered the render window for.
+  useEffect(() => {
+    if (preMeasureMode !== "aggressive") return
+    if (!measureBatch) return
+    const om = offsetMapRef.current
+    if (!om || om.count === 0) return
+
+    const cached = sizeCacheRef.current
+    const unmeasured: Array<{ key: string | number; index: number; data: T }> = []
+    for (let i = 0; i < items.length; i++) {
+      const key = keyIndexRef.current.getKey(i)
+      if (key === undefined || key === null) continue
+      if (cached.has(key)) continue
+      unmeasured.push({ key, index: i, data: items[i]! })
+    }
+
+    if (unmeasured.length === 0) return
+
+    let cancelled = false
+    const BATCH_SIZE = 10
+
+    const measureNextBatch = () => {
+      if (cancelled) return
+      const batch = unmeasured.splice(0, BATCH_SIZE)
+      if (batch.length === 0) return
+
+      measureBatch.measure(batch).then((sizes) => {
+        if (cancelled) return
+        const omNow = offsetMapRef.current
+        if (!omNow) return
+        for (const [key, size] of sizes) {
+          if (size <= 0) continue
+          cached.set(key, size)
+          const idx = keyIndexRef.current.getIndex(key)
+          if (idx !== undefined) omNow.setSize(idx, size)
+        }
+        forceRender()
+
+        if (unmeasured.length > 0) scheduleIdle(measureNextBatch)
+      })
+    }
+
+    scheduleIdle(measureNextBatch)
+
+    return () => {
+      cancelled = true
+    }
+  }, [items, preMeasureMode, measureBatch, forceRender])
 
   // Scroll handler — rAF throttled + flushSync
   useEffect(() => {

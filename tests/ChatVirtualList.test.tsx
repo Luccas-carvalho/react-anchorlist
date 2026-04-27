@@ -148,6 +148,37 @@ describe("ChatVirtualList", () => {
     expect(scroller?.style.overflowAnchor).toBe("none")
   })
 
+  it("mounts without errors with preMeasureMode='aggressive'", () => {
+    const { container } = render(
+      <ChatVirtualList
+        data={makeItems(50)}
+        computeItemKey={(_, item: Item) => item.id}
+        itemContent={(_, item: Item) => <div>{item.text}</div>}
+        preMeasureMode="aggressive"
+      />
+    )
+    expect(container).toBeTruthy()
+  })
+
+  it("renders identically with preMeasureMode='lazy' (default)", () => {
+    const { container: lazy } = render(
+      <ChatVirtualList
+        data={makeItems(5)}
+        computeItemKey={(_, item: Item) => item.id}
+        itemContent={(_, item: Item) => <div>{item.text}</div>}
+        preMeasureMode="lazy"
+      />
+    )
+    const { container: defaultMode } = render(
+      <ChatVirtualList
+        data={makeItems(5)}
+        computeItemKey={(_, item: Item) => item.id}
+        itemContent={(_, item: Item) => <div>{item.text}</div>}
+      />
+    )
+    expect(lazy.innerHTML).toBe(defaultMode.innerHTML)
+  })
+
   it("fires onStartReached for short conversations initialized at bottom", async () => {
     const onStartReached = vi.fn()
     const { container } = render(

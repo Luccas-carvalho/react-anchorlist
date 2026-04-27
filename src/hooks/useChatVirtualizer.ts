@@ -3,6 +3,7 @@ import { useVirtualEngine } from "./useVirtualEngine"
 import { useScrollAnchor } from "./useScrollAnchor"
 import { useAtBottom } from "./useAtBottom"
 import { useFollowOutput } from "./useFollowOutput"
+import { useMeasureBatch } from "../core/measureBatch"
 import {
   buildReachedRootMargin,
   getThresholdPixels,
@@ -40,6 +41,10 @@ export function useChatVirtualizer<T>(options: {
    * unrendered items above viewport using a single average size.
    */
   getItemEstimate?: (item: T, index: number) => number
+  /**
+   * Pre-measure strategy. See ChatVirtualListProps.preMeasureMode.
+   */
+  preMeasureMode?: "lazy" | "aggressive"
   /** @deprecated Prefer `scrollModifier` with `type: "jump-to-key"` */
   scrollToMessageKey?: string | number | null
   /** @deprecated Prefer command id tracking on `scrollModifier` */
@@ -60,9 +65,12 @@ export function useChatVirtualizer<T>(options: {
     startReachedThreshold = 300,
     endReachedThreshold = 300,
     getItemEstimate,
+    preMeasureMode = "lazy",
     scrollToMessageKey,
     onScrollToMessageComplete,
   } = options
+
+  const measureBatch = useMeasureBatch<T>()
 
   const engine = useVirtualEngine({
     items,
@@ -71,6 +79,8 @@ export function useChatVirtualizer<T>(options: {
     overscan,
     initialAlignment,
     getItemEstimate,
+    measureBatch,
+    preMeasureMode,
   })
 
   const isAtBottom = useAtBottom(engine.scrollerRef, {
@@ -326,5 +336,6 @@ export function useChatVirtualizer<T>(options: {
     scrollToKey,
     isAtBottom,
     prepareAnchor,
+    MeasureBatchRenderer: measureBatch.Renderer,
   }
 }

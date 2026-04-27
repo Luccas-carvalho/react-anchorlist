@@ -24,6 +24,7 @@ function ChatVirtualListInner<T>(
     startReachedThreshold = 300,
     endReachedThreshold = 300,
     getItemEstimate,
+    preMeasureMode = "lazy",
     scrollToMessageKey,
     onScrollToMessageComplete,
     onAtBottomChange,
@@ -45,6 +46,7 @@ function ChatVirtualListInner<T>(
     scrollToKey,
     isAtBottom,
     prepareAnchor,
+    MeasureBatchRenderer,
   } = useChatVirtualizer({
     items: data,
     getKey: (item: T, index: number) => computeItemKey(index, item),
@@ -60,6 +62,7 @@ function ChatVirtualListInner<T>(
     startReachedThreshold,
     endReachedThreshold,
     getItemEstimate,
+    preMeasureMode,
     scrollToMessageKey,
     onScrollToMessageComplete,
   })
@@ -135,6 +138,8 @@ function ChatVirtualListInner<T>(
         aria-hidden="true"
         style={{ position: "relative", width: "100%", height: 1, pointerEvents: "none" }}
       />
+
+      <MeasureBatchRenderer itemContent={itemContent} containerWidth="100%" />
     </div>
   )
 }
