@@ -139,21 +139,30 @@ export function useChatVirtualizer<T>(options: {
     })
   }, [scrollModifier, isAtBottom, prepareAnchor, scrollToBottom, scrollToKey])
 
-  // startReached: fire when close to top.
-  // Arm after user moved away from top once OR when content is too short
-  // to ever exceed the threshold.
+  // Stable refs so scroll effects don't re-run when callback identity changes.
+  const onStartReachedRef = useRef(onStartReached)
+  useEffect(() => { onStartReachedRef.current = onStartReached })
+  const onEndReachedRef = useRef(onEndReached)
+  useEffect(() => { onEndReachedRef.current = onEndReached })
+
+  // startReached: fire when close to top, then disarm until user scrolls
+  // past the rearm zone. Prevents cascading fires when newly-prepended
+  // items leave scrollTop inside the threshold band.
   const startInFlight = useRef(false)
   const startArmed = useRef(initialAlignment === "top")
   useEffect(() => {
     const el = engine.scrollerRef.current
-    if (!el || !onStartReached) return
+    if (!el || !onStartReachedRef.current) return
+
+    const rearmZone = startReachedThreshold * 2
 
     const handler = () => {
+      if (!onStartReachedRef.current) return
       const top = el.scrollTop
 
       if (!startArmed.current) {
         const conversationTooShort = el.scrollHeight <= el.clientHeight + startReachedThreshold
-        if (conversationTooShort || top > startReachedThreshold) {
+        if (conversationTooShort || top > rearmZone) {
           startArmed.current = true
         }
       }
@@ -162,7 +171,8 @@ export function useChatVirtualizer<T>(options: {
 
       if (top <= startReachedThreshold && !startInFlight.current) {
         startInFlight.current = true
-        Promise.resolve(onStartReached()).finally(() => {
+        startArmed.current = false
+        Promise.resolve(onStartReachedRef.current()).finally(() => {
           startInFlight.current = false
         })
       }
@@ -171,25 +181,42 @@ export function useChatVirtualizer<T>(options: {
     el.addEventListener("scroll", handler, { passive: true })
     handler()
     return () => el.removeEventListener("scroll", handler)
-  }, [engine.scrollerRef, onStartReached, startReachedThreshold, initialAlignment])
+  }, [engine.scrollerRef, startReachedThreshold, initialAlignment])
 
-  // endReached: fire when close to bottom.
+  // endReached: same rearm pattern at the bottom edge.
   const endInFlight = useRef(false)
+  const endArmed = useRef(initialAlignment === "bottom")
   useEffect(() => {
     const el = engine.scrollerRef.current
-    if (!el || !onEndReached) return
+    if (!el || !onEndReachedRef.current) return
+
+    const rearmZone = endReachedThreshold * 2
+
     const handler = () => {
+      if (!onEndReachedRef.current) return
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+
+      if (!endArmed.current) {
+        const conversationTooShort = el.scrollHeight <= el.clientHeight + endReachedThreshold
+        if (conversationTooShort || dist > rearmZone) {
+          endArmed.current = true
+        }
+      }
+
+      if (!endArmed.current) return
+
       if (dist <= endReachedThreshold && !endInFlight.current) {
         endInFlight.current = true
-        Promise.resolve(onEndReached()).finally(() => {
+        endArmed.current = false
+        Promise.resolve(onEndReachedRef.current()).finally(() => {
           endInFlight.current = false
         })
       }
     }
     el.addEventListener("scroll", handler, { passive: true })
+    handler()
     return () => el.removeEventListener("scroll", handler)
-  }, [engine.scrollerRef, onEndReached, endReachedThreshold])
+  }, [engine.scrollerRef, endReachedThreshold, initialAlignment])
 
   // Deprecated imperative scroll-to-message-key support.
   const scrolledKeyRef = useRef<string | number | null>(null)
