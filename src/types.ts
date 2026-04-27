@@ -174,6 +174,8 @@ export interface UseVirtualEngineReturn<T> {
   scrollTop: number
   stateMachine: ScrollStateMachine
   flushPendingSync: () => void
+  /** Imperative: release post-prepend force-render expansion. Called by anchor onRestored. */
+  clearJustPrepended: () => void
 }
 
 export interface RenderRange {

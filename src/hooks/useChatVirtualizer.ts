@@ -16,8 +16,6 @@ import type {
   UseChatVirtualizerReturn,
 } from "../types"
 
-const LOG = (...args: unknown[]) => console.log("[anchorlist]", ...args)
-
 /**
  * Composites all virtual engine hooks into a single chat-optimized hook.
  */
@@ -82,10 +80,13 @@ export function useChatVirtualizer<T>(options: {
 
   // Force a synchronous re-render after anchor restoration so that
   // virtualItems are recomputed with corrected scrollTop before paint.
+  // Also releases the post-prepend force-render expansion so the next
+  // render shrinks back to the normal overscan window.
   const [, setAnchorTick] = useState(0)
   const onAnchorRestored = useCallback(() => {
+    engine.clearJustPrepended()
     setAnchorTick((t) => t + 1)
-  }, [])
+  }, [engine])
 
   const { prepareAnchor } = useScrollAnchor({
     scrollerRef: engine.scrollerRef,
@@ -173,36 +174,18 @@ export function useChatVirtualizer<T>(options: {
   const endTriggeredRef = useRef(false)
 
   useEffect(() => {
-    LOG("🔄 keys/length changed — resetting triggered locks", {
-      itemsLength: items.length,
-      firstKey,
-      lastKey,
-      startInFlight: startInFlight.current,
-      endInFlight: endInFlight.current,
-    })
     startTriggeredRef.current = false
     endTriggeredRef.current = false
   }, [items.length, firstKey, lastKey])
 
   const triggerStartReached = useCallback(() => {
     const callback = onStartReachedRef.current
-    LOG("🚀 triggerStartReached called", {
-      hasCallback: !!callback,
-      startInFlight: startInFlight.current,
-      startTriggered: startTriggeredRef.current,
-    })
-    if (!callback || startInFlight.current) {
-      LOG("⛔ triggerStartReached SKIPPED (no callback or in-flight)")
-      return
-    }
+    if (!callback || startInFlight.current) return
 
     // Automatic anchor capture before loading older pages.
-    LOG("⚓ prepareAnchor() called from triggerStartReached")
     prepareAnchor()
     startInFlight.current = true
-    LOG("✈️ startInFlight = true")
     Promise.resolve(callback()).finally(() => {
-      LOG("🏁 startInFlight = false (callback resolved)")
       startInFlight.current = false
     })
   }, [prepareAnchor])
@@ -229,23 +212,12 @@ export function useChatVirtualizer<T>(options: {
       const observer = new IntersectionObserver(
         ([entry]) => {
           if (!entry) return
-          LOG("👁️ IntersectionObserver (start)", {
-            isIntersecting: entry.isIntersecting,
-            startTriggered: startTriggeredRef.current,
-            startInFlight: startInFlight.current,
-            intersectionRatio: entry.intersectionRatio,
-          })
           if (!entry.isIntersecting) {
             startTriggeredRef.current = false
-            LOG("👁️ sentinel left viewport — startTriggered = false")
             return
           }
-          if (startTriggeredRef.current || startInFlight.current) {
-            LOG("👁️ sentinel intersecting but SKIPPED (already triggered or in-flight)")
-            return
-          }
+          if (startTriggeredRef.current || startInFlight.current) return
           startTriggeredRef.current = true
-          LOG("👁️ sentinel intersecting — calling triggerStartReached")
           triggerStartReached()
         },
         {
