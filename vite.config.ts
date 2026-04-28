@@ -9,6 +9,7 @@ export default defineConfig({
     dts({ include: ["src"], outDir: "dist" }),
   ],
   build: {
+    minify: false,
     lib: {
       entry: resolve(__dirname, "src/index.ts"),
       name: "EzchatVirtual",
