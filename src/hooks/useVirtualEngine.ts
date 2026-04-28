@@ -14,15 +14,15 @@ import type { MeasureBatchController } from "../core/measureBatch"
 import type { AnchorSnapshot, UseVirtualEngineReturn, VirtualItem } from "../types"
 
 // Schedules a callback for an idle browser frame. Falls back to setTimeout(16)
-// in browsers without requestIdleCallback (Safari < 17). 1s timeout caps
-// waiting under load.
+// in browsers without requestIdleCallback (Safari < 17). 200ms timeout caps
+// waiting — aggressive convergence for pre-measure under user load.
 function scheduleIdle(cb: () => void): void {
   if (typeof window === "undefined") return
   const w = window as Window & {
     requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
   }
   if (typeof w.requestIdleCallback === "function") {
-    w.requestIdleCallback(cb, { timeout: 1000 })
+    w.requestIdleCallback(cb, { timeout: 200 })
   } else {
     setTimeout(cb, 16)
   }
@@ -173,7 +173,7 @@ export function useVirtualEngine<T>(options: {
     if (unmeasured.length === 0) return
 
     let cancelled = false
-    const BATCH_SIZE = 10
+    const BATCH_SIZE = 30
 
     const measureNextBatch = () => {
       if (cancelled) return
