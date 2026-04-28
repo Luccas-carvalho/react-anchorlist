@@ -1,6 +1,6 @@
 {
   "name": "react-anchorlist",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Pixel-perfect virtualized lists for React. Zero flicker on prepend. Built for chat, feeds, and infinite scroll.",
   "keywords": [
     "react",
